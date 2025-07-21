@@ -195,6 +195,19 @@ class DynamoDBService:
             prepared_item = self._prepare_item_for_db(item)
             self.purchase_orders_table.put_item(Item=prepared_item)
             
+            # Create audit log entry
+            await self.create_audit_log(
+                action="CREATE",
+                entity_type="PurchaseOrder",
+                entity_id=po_id,
+                details={
+                    "vendor_id": po_data.get("vendor_id"),
+                    "total_amount": po_data.get("total_amount"),
+                    "status": po_data.get("status", "pending"),
+                    "items_count": len(po_data.get("items", []))
+                }
+            )
+            
             logger.info(f"Created purchase order with ID: {po_id}")
             return self._convert_item_from_db(prepared_item)
             
@@ -249,6 +262,19 @@ class DynamoDBService:
                 ReturnValues="ALL_NEW"
             )
             
+            # Create audit log entry
+            await self.create_audit_log(
+                action="UPDATE",
+                entity_type="PurchaseOrder",
+                entity_id=po_id,
+                details={
+                    "updated_fields": list(update_data.keys()),
+                    "previous_status": existing_po.get("status"),
+                    "new_status": update_data.get("status"),
+                    "changes": update_data
+                }
+            )
+            
             logger.info(f"Updated purchase order with ID: {po_id}")
             return self._convert_item_from_db(response['Attributes'])
             
@@ -265,6 +291,20 @@ class DynamoDBService:
                 raise Exception("Purchase order not found")
             
             self.purchase_orders_table.delete_item(Key={'id': po_id})
+            
+            # Create audit log entry
+            await self.create_audit_log(
+                action="DELETE",
+                entity_type="PurchaseOrder",
+                entity_id=po_id,
+                details={
+                    "vendor_id": existing_po.get("vendor_id"),
+                    "total_amount": existing_po.get("total_amount"),
+                    "status": existing_po.get("status"),
+                    "deleted_items": existing_po.get("items", [])
+                }
+            )
+            
             logger.info(f"Deleted purchase order with ID: {po_id}")
             return True
             
@@ -297,6 +337,45 @@ class DynamoDBService:
         except ClientError as e:
             logger.error(f"Error listing purchase orders: {e}")
             raise Exception(f"Failed to list purchase orders: {str(e)}")
+    
+    # Audit logging operations
+    async def create_audit_log(self, action: str, entity_type: str, entity_id: str, details: Dict[str, Any], user_id: Optional[str] = None) -> Dict[str, Any]:
+        """Create an audit log entry"""
+        try:
+            log_id = str(uuid.uuid4())
+            now = datetime.utcnow()
+            
+            audit_entry = {
+                'id': log_id,
+                'type': 'PO_ACTION',
+                'action': action,
+                'entity_type': entity_type,
+                'entity_id': entity_id,
+                'user_id': user_id or 'system',
+                'timestamp': now,
+                'details': details,
+                'created_at': now
+            }
+            
+            prepared_entry = self._prepare_item_for_db(audit_entry)
+            self.audit_log_table.put_item(Item=prepared_entry)
+            
+            logger.info(f"Created audit log entry: {action} on {entity_type} {entity_id}")
+            return self._convert_item_from_db(prepared_entry)
+            
+        except ClientError as e:
+            logger.error(f"Error creating audit log: {e}")
+            # Don't raise exception for audit logging failures to avoid breaking main operations
+            return {}
+    
+    async def validate_vendor_exists(self, vendor_id: str) -> bool:
+        """Validate that a vendor exists in the VendorsTable"""
+        try:
+            vendor = await self.get_vendor(vendor_id)
+            return vendor is not None
+        except Exception as e:
+            logger.error(f"Error validating vendor {vendor_id}: {e}")
+            return False
 
 # Global service instance
 db_service = DynamoDBService() 

@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Query
-from typing import List, Optional
-from ..models import PurchaseOrder, PurchaseOrderCreate, PurchaseOrderUpdate, APIResponse, PaginatedResponse, POStatus
+from typing import List, Optional, Literal
+from ..models import PurchaseOrder, PurchaseOrderCreate, PurchaseOrderUpdate, APIResponse, PaginatedResponse
 from ..services.dynamodb_service import db_service
 import uuid
 from datetime import datetime
@@ -11,15 +11,14 @@ router = APIRouter()
 async def list_purchase_orders(
     page: int = Query(1, ge=1, description="Page number"),
     size: int = Query(10, ge=1, le=100, description="Page size"),
-    status: Optional[POStatus] = Query(None, description="Filter by status"),
+    status: Optional[Literal["pending", "approved", "rejected"]] = Query(None, description="Filter by status"),
     vendor_id: Optional[str] = Query(None, description="Filter by vendor ID")
 ):
     """List all purchase orders with pagination and optional filters"""
     try:
         # Get purchase orders from DynamoDB
-        status_filter = status.value if status else None
         pos_data = await db_service.list_purchase_orders(
-            status_filter=status_filter,
+            status_filter=status,
             vendor_id_filter=vendor_id
         )
         
@@ -46,6 +45,11 @@ async def list_purchase_orders(
 async def create_purchase_order(po: PurchaseOrderCreate):
     """Create a new purchase order"""
     try:
+        # Validate vendor exists
+        vendor_exists = await db_service.validate_vendor_exists(po.vendor_id)
+        if not vendor_exists:
+            raise HTTPException(status_code=400, detail=f"Vendor with ID {po.vendor_id} not found")
+        
         # Create purchase order in DynamoDB
         po_data = await db_service.create_purchase_order(po.dict())
         
@@ -57,6 +61,8 @@ async def create_purchase_order(po: PurchaseOrderCreate):
             message="Purchase order created successfully",
             data=new_po
         )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -134,9 +140,9 @@ async def delete_purchase_order(po_id: str):
             raise HTTPException(status_code=404, detail="Purchase order not found")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/{po_id}/approve", response_model=APIResponse)
-async def approve_purchase_order(po_id: str, approved_by: str):
-    """Approve a purchase order"""
+@router.put("/{po_id}/approve", response_model=APIResponse)
+async def approve_purchase_order(po_id: str):
+    """Approve a purchase order (status change)"""
     try:
         # Get current purchase order
         po_data = await db_service.get_purchase_order(po_id)
@@ -146,7 +152,7 @@ async def approve_purchase_order(po_id: str, approved_by: str):
         
         # Check current status
         current_status = po_data.get("status")
-        if current_status != POStatus.DRAFT.value:
+        if current_status != "pending":
             raise HTTPException(
                 status_code=400, 
                 detail=f"Cannot approve purchase order with status: {current_status}"
@@ -154,8 +160,7 @@ async def approve_purchase_order(po_id: str, approved_by: str):
         
         # Update purchase order with approval
         update_data = {
-            "status": POStatus.APPROVED.value,
-            "approved_by": approved_by
+            "status": "approved"
         }
         
         updated_po_data = await db_service.update_purchase_order(po_id, update_data)
@@ -171,38 +176,4 @@ async def approve_purchase_order(po_id: str, approved_by: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/{po_id}/send", response_model=APIResponse)
-async def send_purchase_order(po_id: str):
-    """Send a purchase order to vendor"""
-    try:
-        # Get current purchase order
-        po_data = await db_service.get_purchase_order(po_id)
-        
-        if not po_data:
-            raise HTTPException(status_code=404, detail="Purchase order not found")
-        
-        # Check current status
-        current_status = po_data.get("status")
-        if current_status != POStatus.APPROVED.value:
-            raise HTTPException(
-                status_code=400, 
-                detail=f"Cannot send purchase order with status: {current_status}"
-            )
-        
-        # Update purchase order status to sent
-        update_data = {
-            "status": POStatus.SENT.value
-        }
-        
-        updated_po_data = await db_service.update_purchase_order(po_id, update_data)
-        updated_po = PurchaseOrder(**updated_po_data)
-        
-        return APIResponse(
-            success=True,
-            message="Purchase order sent to vendor successfully",
-            data=updated_po
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e)) 
+ 

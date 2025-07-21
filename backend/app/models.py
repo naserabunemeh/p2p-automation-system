@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, EmailStr
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Union, Literal
 from datetime import datetime
 from decimal import Decimal
 from enum import Enum
@@ -64,35 +64,20 @@ class Vendor(VendorBase, BaseEntity):
     pass
 
 # Purchase Order Models
-class POLineItem(BaseModel):
-    line_number: int
-    description: str
-    quantity: int = Field(..., gt=0)
-    unit_price: Decimal = Field(..., gt=0)
-    total_amount: Decimal
-
 class PurchaseOrderBase(BaseModel):
     vendor_id: str
-    po_number: str = Field(..., min_length=1)
-    description: Optional[str] = None
-    line_items: List[POLineItem]
-    total_amount: Decimal = Field(..., gt=0)
-    status: POStatus = POStatus.DRAFT
-    requested_by: str
-    approved_by: Optional[str] = None
-    delivery_date: Optional[datetime] = None
+    items: List[Dict[str, Union[str, float, int]]]
+    total_amount: float = Field(..., gt=0)
+    status: Literal["pending", "approved", "rejected"] = "pending"
 
 class PurchaseOrderCreate(PurchaseOrderBase):
     pass
 
 class PurchaseOrderUpdate(BaseModel):
     vendor_id: Optional[str] = None
-    description: Optional[str] = None
-    line_items: Optional[List[POLineItem]] = None
-    total_amount: Optional[Decimal] = None
-    status: Optional[POStatus] = None
-    approved_by: Optional[str] = None
-    delivery_date: Optional[datetime] = None
+    items: Optional[List[Dict[str, Union[str, float, int]]]] = None
+    total_amount: Optional[float] = None
+    status: Optional[Literal["pending", "approved", "rejected"]] = None
 
 class PurchaseOrder(PurchaseOrderBase, BaseEntity):
     pass
