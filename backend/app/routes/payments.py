@@ -35,6 +35,24 @@ async def list_payments(
             invoice_id_filter=invoice_id
         )
         
+        # Create audit log for payment list operation
+        await db_service.create_audit_log(
+            action="LIST",
+            entity_type="Payment",
+            entity_id="batch_operation",
+            details={
+                "filters_applied": {
+                    "status": status,
+                    "vendor_id": vendor_id,
+                    "invoice_id": invoice_id
+                },
+                "results_count": len(payments),
+                "page": page,
+                "size": size
+            },
+            log_type="PAYMENT_ACTION"
+        )
+        
         # Apply pagination
         total = len(payments)
         start = (page - 1) * size
@@ -114,7 +132,28 @@ async def approve_payment(invoice_id: str, request: ApprovePaymentRequest):
         if update_data:
             payment = await db_service.update_payment(payment['id'], update_data)
         
-        # Step 8: Prepare response
+        # Step 8: Create comprehensive audit log for payment approval with S3 file references
+        await db_service.create_audit_log(
+            action="APPROVE_WITH_FILES",
+            entity_type="Payment", 
+            entity_id=payment['id'],
+            details={
+                "invoice_id": invoice_id,
+                "vendor_id": payment['vendor_id'],
+                "amount": payment['amount'],
+                "status": payment['status'],
+                "approved_by": request.approved_by,
+                "xml_s3_key": payment.get('xml_s3_key'),
+                "json_s3_key": payment.get('json_s3_key'),
+                "xml_upload_success": xml_upload_result.get('success', False),
+                "json_upload_success": json_upload_result.get('success', False),
+                "s3_bucket": s3_service.bucket_name,
+                "files_generated": ['xml', 'json']
+            },
+            log_type="PAYMENT_ACTION"
+        )
+        
+        # Step 9: Prepare response
         response_data = {
             'payment': enhanced_payment,
             'files_generated': {
@@ -162,6 +201,22 @@ async def get_payment(payment_id: str):
             's3_files': s3_files
         }
         
+        # Create audit log for payment retrieval
+        await db_service.create_audit_log(
+            action="READ",
+            entity_type="Payment",
+            entity_id=payment_id,
+            details={
+                "invoice_id": payment.get("invoice_id"),
+                "vendor_id": payment.get("vendor_id"),
+                "amount": payment.get("amount"),
+                "status": payment.get("status"),
+                "xml_s3_key": payment.get("xml_s3_key"),
+                "json_s3_key": payment.get("json_s3_key")
+            },
+            log_type="PAYMENT_ACTION"
+        )
+        
         return APIResponse(
             success=True,
             message="Payment retrieved successfully",
@@ -189,6 +244,25 @@ async def update_payment(payment_id: str, payment_update: PaymentUpdate):
         
         # Update payment in DynamoDB
         updated_payment = await db_service.update_payment(payment_id, update_data)
+        
+        # Additional audit log for route-level update with enhanced details
+        await db_service.create_audit_log(
+            action="UPDATE_VIA_API",
+            entity_type="Payment",
+            entity_id=payment_id,
+            details={
+                "invoice_id": updated_payment.get("invoice_id"),
+                "vendor_id": updated_payment.get("vendor_id"),
+                "amount": updated_payment.get("amount"),
+                "status": updated_payment.get("status"),
+                "xml_s3_key": updated_payment.get("xml_s3_key"),
+                "json_s3_key": updated_payment.get("json_s3_key"),
+                "fields_updated": list(update_data.keys()),
+                "previous_status": existing_payment.get("status"),
+                "new_status": updated_payment.get("status")
+            },
+            log_type="PAYMENT_ACTION"
+        )
         
         return APIResponse(
             success=True,

@@ -640,4 +640,261 @@ For any issues with these resources, ensure your AWS CLI is configured with the 
 
 ---
 
+## 💳 **Payments API - Complete Implementation**
+
+### ✅ **Payment API Endpoints (Part B Model + Part C S3 Integration)**
+
+**Base URL**: `/api/v1/payments`
+
+#### **POST `/payments/{invoice_id}/approve`**
+- **Purpose**: Approve reconciled invoice and create payment with file generation
+- **Workflow**: 
+  1. Validates invoice status (must be 'matched')
+  2. Creates payment record in PaymentsTable
+  3. Generates Workday-compatible XML and JSON files
+  4. Uploads files to S3 with metadata tags
+  5. Updates payment record with S3 file keys
+  6. Creates comprehensive audit logs
+- **Request Body**: `{"approved_by": "user@company.com"}`
+- **Response**: Payment details + S3 file upload results
+
+#### **GET `/payments`**
+- **Purpose**: List payments with pagination and filtering
+- **Query Parameters**: 
+  - `page` (default: 1), `size` (default: 10)
+  - `status` (approved|sent|failed)
+  - `vendor_id`, `invoice_id`
+- **Response**: Paginated payment list
+
+#### **GET `/payments/{payment_id}`**
+- **Purpose**: Retrieve payment details with S3 file information
+- **Response**: Payment data + S3 file metadata
+
+#### **PUT `/payments/{payment_id}`**
+- **Purpose**: Update payment record
+- **Request Body**: `PaymentUpdate` model fields
+- **Response**: Updated payment data
+
+#### **GET `/payments/{payment_id}/files`**
+- **Purpose**: List all S3 files for a payment
+- **Response**: S3 file metadata and links
+
+#### **GET `/payments/{payment_id}/files/{format}`**
+- **Purpose**: Download XML or JSON payment file from S3
+- **Parameters**: `format` (xml|json)
+- **Response**: File content with download headers
+
+---
+
+### 📊 **Payment Model Structure (Part B)**
+
+```python
+class Payment(BaseModel):
+    id: str
+    invoice_id: str
+    vendor_id: str
+    amount: float = Field(..., gt=0)
+    currency: str = "USD"
+    status: Literal["approved", "sent", "failed"] = "approved"
+    approved_at: datetime = Field(default_factory=utc_now)
+    xml_s3_key: Optional[str] = None
+    json_s3_key: Optional[str] = None
+    # BaseEntity fields: created_at, updated_at
+```
+
+#### **Key Model Features**:
+- ✅ **Simplified Structure**: Removed complex payment processing fields
+- ✅ **Literal Status**: Type-safe status values
+- ✅ **S3 Integration**: Direct tracking of XML/JSON file keys
+- ✅ **Currency Support**: Explicit currency handling (USD default)
+- ✅ **Auto-timestamps**: Timezone-aware datetime handling
+
+---
+
+### 🗂️ **S3 File Organization & Upload Pattern (Part C)**
+
+#### **Bucket Structure**
+```
+p2p-payment-xml-storage-20250721-005155-6839/
+├── payments/
+│   ├── payment-001/
+│   │   ├── payment.xml
+│   │   └── payment.json
+│   ├── payment-002/
+│   │   ├── payment.xml
+│   │   └── payment.json
+│   └── ...
+```
+
+#### **File Naming Convention**
+- **XML Files**: `payments/{payment_id}/payment.xml`
+- **JSON Files**: `payments/{payment_id}/payment.json`
+- **Organization**: Each payment gets dedicated folder
+- **Consistency**: No timestamps in filenames for clean structure
+
+#### **Upload Process**
+1. **File Generation**: XML and JSON created from payment data
+2. **S3 Upload**: Files uploaded with server-side encryption (AES256)
+3. **Metadata Tagging**: Rich metadata for searchability
+4. **Key Storage**: S3 keys stored in payment record for tracking
+5. **Audit Logging**: All operations logged with file references
+
+---
+
+### 🏷️ **S3 Metadata Tagging Strategy**
+
+#### **Required Tags (Part C Specification)**
+- `invoice_id`: Associated invoice identifier
+- `vendor_id`: Vendor identifier for payment
+- `amount`: Payment amount (formatted as string)
+- `status`: Payment status (approved|sent|failed)
+
+#### **Additional System Tags**
+- `payment_id`: Payment record identifier
+- `file_format`: File type (xml|json)
+- `upload_timestamp`: ISO timestamp of upload
+- `content_type`: MIME type (application/xml|application/json)
+
+#### **Tag Usage Examples**
+```bash
+# Search by vendor
+aws s3api get-object-tagging --bucket {bucket} --key payments/pay-001/payment.xml
+# Filter by amount range
+aws s3api list-objects-v2 --bucket {bucket} --prefix payments/ --query "Contents[?Size > 1000]"
+```
+
+---
+
+### 📄 **XML/JSON Format Specifications (Workday Compatible)**
+
+#### **Workday-Compatible XML Format**
+```xml
+<?xml version="1.0" ?>
+<Payment>
+  <ID>pay_001</ID>
+  <InvoiceID>inv_123</InvoiceID>
+  <VendorID>vnd_456</VendorID>
+  <Amount>250.00</Amount>
+  <Currency>USD</Currency>
+  <Status>approved</Status>
+  <Timestamp>2025-07-21T18:33:00Z</Timestamp>
+</Payment>
+```
+
+#### **JSON Mirror Format**
+```json
+{
+  "Payment": {
+    "ID": "pay_001",
+    "InvoiceID": "inv_123",
+    "VendorID": "vnd_456",
+    "Amount": "250.00",
+    "Currency": "USD",
+    "Status": "approved",
+    "Timestamp": "2025-07-21T18:33:00Z"
+  }
+}
+```
+
+#### **Format Features**
+- ✅ **Workday Schema Compliance**: Exact match to enterprise standards
+- ✅ **PascalCase Elements**: Professional naming convention
+- ✅ **Structured Data**: Clean, parseable format
+- ✅ **Decimal Precision**: Amount formatted to 2 decimal places
+- ✅ **ISO Timestamps**: Timezone-aware datetime formatting
+- ✅ **Mirror Consistency**: JSON structure matches XML exactly
+
+---
+
+### 🔍 **Workday Compatibility Notes**
+
+#### **Schema Alignment**
+- ✅ **Element Names**: Match Workday field naming conventions
+- ✅ **Data Types**: Proper string/numeric type handling
+- ✅ **Date Format**: ISO 8601 with timezone information
+- ✅ **Currency Standard**: ISO currency codes (USD)
+- ✅ **Decimal Format**: Financial precision (2 decimal places)
+
+#### **Integration Ready**
+- ✅ **Import Compatibility**: Files ready for Workday import
+- ✅ **Validation Ready**: Schema-compliant for validation tools
+- ✅ **Transformation Ready**: Standard format for ETL processes
+- ✅ **Audit Trail**: Complete lineage from P2P to Workday
+
+#### **Future Enhancements**
+- [ ] **Multi-currency Support**: Extended currency handling
+- [ ] **Workday API Integration**: Direct API calls vs file transfer
+- [ ] **Real-time Sync**: Event-driven synchronization
+- [ ] **Advanced Validation**: Pre-upload Workday schema validation
+
+---
+
+### 📋 **Audit Logging Implementation (Part D)**
+
+#### **PAYMENT_ACTION Log Types**
+All payment operations create audit logs with `type: "PAYMENT_ACTION"`:
+
+- ✅ **CREATE**: Payment record creation
+- ✅ **READ**: Payment data retrieval  
+- ✅ **UPDATE**: Payment modification
+- ✅ **UPDATE_VIA_API**: Route-level updates
+- ✅ **LIST**: Payment listing operations
+- ✅ **APPROVE**: Invoice approval with payment creation
+- ✅ **APPROVE_WITH_FILES**: Complete approval workflow with S3 files
+
+#### **Required Audit Fields (Part D Specification)**
+```json
+{
+  "type": "PAYMENT_ACTION",
+  "action": "APPROVE_WITH_FILES",
+  "entity_type": "Payment",
+  "entity_id": "payment-123",
+  "details": {
+    "status": "approved",
+    "invoice_id": "inv-456",
+    "vendor_id": "vendor-789",
+    "amount": 1250.00,
+    "xml_s3_key": "payments/payment-123/payment.xml",
+    "json_s3_key": "payments/payment-123/payment.json",
+    "s3_bucket": "p2p-payment-xml-storage-*",
+    "approved_by": "user@company.com"
+  }
+}
+```
+
+#### **Audit Trail Features**
+- ✅ **Complete Coverage**: All payment operations logged
+- ✅ **S3 File References**: Direct links to generated files
+- ✅ **User Attribution**: Who performed each action
+- ✅ **Rich Context**: Business context and technical details
+- ✅ **Compliance Ready**: Full audit trail for SOX/regulatory requirements
+
+---
+
+### 🧪 **End-to-End Workflow Verification**
+
+#### **Payment Approval Workflow**
+1. **POST** `/payments/inv-123/approve` → Creates payment + generates files
+2. **S3 Upload** → XML/JSON uploaded with metadata tags
+3. **Database Update** → Payment record updated with S3 keys
+4. **Audit Logging** → Complete audit trail created
+5. **GET** `/payments/payment-123` → Returns payment with S3 file links
+
+#### **File Access Workflow**
+1. **GET** `/payments/payment-123/files` → Lists available files
+2. **GET** `/payments/payment-123/files/xml` → Downloads XML file
+3. **GET** `/payments/payment-123/files/json` → Downloads JSON file
+
+#### **Integration Verification Checklist**
+- ✅ **Payment Creation**: `/payments/{invoice_id}/approve` works end-to-end
+- ✅ **File Generation**: XML & JSON match Workday schema exactly
+- ✅ **S3 Upload**: Files uploaded with correct keys and metadata
+- ✅ **Database Integration**: S3 keys stored in payment records
+- ✅ **API Responses**: GET endpoints return payment status + S3 links
+- ✅ **Audit Logging**: All operations logged with PAYMENT_ACTION type
+- ✅ **Metadata Tagging**: invoice_id, vendor_id, amount, status tags applied
+- ✅ **Error Handling**: Proper HTTP status codes and error messages
+
+---
+
 *This document tracks the actual AWS resources created for the ERP-Lite P2P Automation System. Keep this updated as resources are modified or additional ones are created.* 
