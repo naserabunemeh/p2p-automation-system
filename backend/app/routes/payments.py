@@ -132,26 +132,26 @@ async def approve_payment(invoice_id: str, request: ApprovePaymentRequest):
         if update_data:
             payment = await db_service.update_payment(payment['id'], update_data)
         
-        # Step 8: Create comprehensive audit log for payment approval with S3 file references
-        await db_service.create_audit_log(
-            action="APPROVE_WITH_FILES",
-            entity_type="Payment", 
-            entity_id=payment['id'],
-            details={
-                "invoice_id": invoice_id,
-                "vendor_id": payment['vendor_id'],
-                "amount": payment['amount'],
-                "status": payment['status'],
-                "approved_by": request.approved_by,
-                "xml_s3_key": payment.get('xml_s3_key'),
-                "json_s3_key": payment.get('json_s3_key'),
-                "xml_upload_success": xml_upload_result.get('success', False),
-                "json_upload_success": json_upload_result.get('success', False),
-                "s3_bucket": s3_service.bucket_name,
-                "files_generated": ['xml', 'json']
-            },
-            log_type="PAYMENT_ACTION"
-        )
+        # Step 8: Create simplified audit log for payment approval with S3 file references
+        try:
+            await db_service.create_audit_log(
+                action="APPROVE_WITH_FILES",
+                entity_type="Payment", 
+                entity_id=payment['id'],
+                details={
+                    "invoice_id": invoice_id,
+                    "vendor_id": str(payment['vendor_id']),
+                    "amount": str(payment['amount']),
+                    "status": str(payment['status']),
+                    "approved_by": str(request.approved_by),
+                    "xml_s3_key": str(payment.get('xml_s3_key', '')),
+                    "json_s3_key": str(payment.get('json_s3_key', '')),
+                    "files_generated": "xml,json"
+                },
+                log_type="PAYMENT_ACTION"
+            )
+        except Exception as audit_error:
+            logger.error(f"Failed to create payment approval audit log: {audit_error}")
         
         # Step 9: Prepare response
         response_data = {
@@ -186,10 +186,16 @@ async def approve_payment(invoice_id: str, request: ApprovePaymentRequest):
 async def get_payment(payment_id: str):
     """Get a payment by ID"""
     try:
+        logger.info(f"API GET payment {payment_id}: Starting...")
+        
         payment = await db_service.get_payment(payment_id)
+        logger.info(f"API GET payment {payment_id}: get_payment returned: {payment is not None}")
         
         if not payment:
+            logger.warning(f"API GET payment {payment_id}: Payment not found")
             raise HTTPException(status_code=404, detail="Payment not found")
+        
+        logger.info(f"API GET payment {payment_id}: Payment found with keys: {list(payment.keys())}")
         
         # Get related S3 files if they exist
         s3_files = None
@@ -201,21 +207,25 @@ async def get_payment(payment_id: str):
             's3_files': s3_files
         }
         
-        # Create audit log for payment retrieval
-        await db_service.create_audit_log(
-            action="READ",
-            entity_type="Payment",
-            entity_id=payment_id,
-            details={
-                "invoice_id": payment.get("invoice_id"),
-                "vendor_id": payment.get("vendor_id"),
-                "amount": payment.get("amount"),
-                "status": payment.get("status"),
-                "xml_s3_key": payment.get("xml_s3_key"),
-                "json_s3_key": payment.get("json_s3_key")
-            },
-            log_type="PAYMENT_ACTION"
-        )
+        # Create audit log for payment retrieval - temporarily disabled for debugging
+        try:
+            await db_service.create_audit_log(
+                action="READ",
+                entity_type="Payment",
+                entity_id=payment_id,
+                details={
+                    "invoice_id": payment.get("invoice_id"),
+                    "vendor_id": payment.get("vendor_id"),
+                    "amount": str(payment.get("amount")),
+                    "status": payment.get("status"),
+                    "xml_s3_key": payment.get("xml_s3_key", ""),
+                    "json_s3_key": payment.get("json_s3_key", "")
+                },
+                log_type="PAYMENT_ACTION"
+            )
+        except Exception as audit_error:
+            logger.warning(f"Audit logging failed for payment {payment_id}: {audit_error}")
+            # Don't fail the entire request if audit logging fails
         
         return APIResponse(
             success=True,
@@ -224,9 +234,11 @@ async def get_payment(payment_id: str):
         )
         
     except Exception as e:
-        logger.error(f"Error getting payment {payment_id}: {e}")
+        logger.error(f"API GET payment {payment_id}: Exception occurred: {e}")
+        import traceback
+        logger.error(f"API GET payment {payment_id}: Full traceback: {traceback.format_exc()}")
         if "Payment not found" in str(e):
-            raise HTTPException(status_code=404, detail=str(e))
+            raise HTTPException(status_code=404, detail=f"404: {str(e)}")
         else:
             raise HTTPException(status_code=500, detail=f"Failed to get payment: {str(e)}")
 

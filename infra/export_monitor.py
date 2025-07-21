@@ -9,7 +9,7 @@ import json
 import logging
 import argparse
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Any, Optional
 from botocore.exceptions import ClientError
 import sys
@@ -47,7 +47,7 @@ class ExportMonitor:
         self.audit_log_table = self.dynamodb.Table('AuditLogTable')
         
         # S3 bucket name
-        self.s3_bucket = "p2p-payment-xml-storage-20250721-005155-6839"
+        self.s3_bucket = "p2p-automation-payments"
         
         # API endpoint for Workday callback (assuming local development)
         self.workday_callback_url = "http://localhost:8000/api/v1/workday/callback"
@@ -217,9 +217,10 @@ class ExportMonitor:
                 'entity_type': 'ExportMonitor',
                 'entity_id': 'scheduled_job',
                 'user_id': 'system',
-                'timestamp': datetime.utcnow().isoformat(),
+                'timestamp': datetime.now(timezone.utc).isoformat(),
                 'details': convert_floats(details),
-                'created_at': datetime.utcnow().isoformat()
+                'workday_url': self.workday_callback_url,
+                'created_at': datetime.now(timezone.utc).isoformat()
             }
             
             self.audit_log_table.put_item(Item=audit_entry)
@@ -235,7 +236,7 @@ class ExportMonitor:
         Generate daily report summary
         """
         report = {
-            'report_timestamp': datetime.utcnow().isoformat(),
+            'report_timestamp': datetime.now(timezone.utc).isoformat(),
             'monitor_run_stats': self.stats.copy(),
             'summary': {
                 'success_rate': 0,
@@ -265,7 +266,7 @@ class ExportMonitor:
         """
         Run a complete monitor cycle
         """
-        cycle_start = datetime.utcnow()
+        cycle_start = datetime.now(timezone.utc)
         self.logger.info(f"Starting export monitor cycle at {cycle_start}")
         
         try:
@@ -321,7 +322,7 @@ class ExportMonitor:
             report = self.generate_daily_report()
             
             # Log monitor completion
-            cycle_end = datetime.utcnow()
+            cycle_end = datetime.now(timezone.utc)
             cycle_duration = (cycle_end - cycle_start).total_seconds()
             
             self.log_monitor_action("MONITOR_COMPLETE", {
@@ -393,7 +394,7 @@ def main():
         print("="*60)
         
         # Save report to file
-        report_filename = f"export_monitor_report_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.json"
+        report_filename = f"export_monitor_report_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.json"
         with open(report_filename, 'w') as f:
             json.dump(report, f, indent=2, default=str)
         logger.info(f"Report saved to {report_filename}")

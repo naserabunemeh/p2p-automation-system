@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import uvicorn
-from datetime import datetime
+from datetime import datetime, timezone
 
 # Import route modules
 from .routes import vendors, purchase_orders, invoices, payments, exports, workday
@@ -41,7 +41,7 @@ async def health_check():
         status_code=200,
         content={
             "status": "healthy",
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "service": "P2P Automation System",
             "version": "1.0.0"
         }

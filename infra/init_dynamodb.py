@@ -34,8 +34,7 @@ TABLE_CONFIG = {
                     {"AttributeName": "status", "KeyType": "HASH"},
                     {"AttributeName": "created_at", "KeyType": "RANGE"}
                 ],
-                "Projection": {"ProjectionType": "ALL"},
-                "BillingMode": "PAY_PER_REQUEST"
+                "Projection": {"ProjectionType": "ALL"}
             }
         ],
         "BillingMode": "PAY_PER_REQUEST",
@@ -64,8 +63,7 @@ TABLE_CONFIG = {
                     {"AttributeName": "vendor_id", "KeyType": "HASH"},
                     {"AttributeName": "created_at", "KeyType": "RANGE"}
                 ],
-                "Projection": {"ProjectionType": "ALL"},
-                "BillingMode": "PAY_PER_REQUEST"
+                "Projection": {"ProjectionType": "ALL"}
             },
             {
                 "IndexName": "status-created_at-index",
@@ -73,16 +71,14 @@ TABLE_CONFIG = {
                     {"AttributeName": "status", "KeyType": "HASH"},
                     {"AttributeName": "created_at", "KeyType": "RANGE"}
                 ],
-                "Projection": {"ProjectionType": "ALL"},
-                "BillingMode": "PAY_PER_REQUEST"
+                "Projection": {"ProjectionType": "ALL"}
             },
             {
                 "IndexName": "po_number-index",
                 "KeySchema": [
                     {"AttributeName": "po_number", "KeyType": "HASH"}
                 ],
-                "Projection": {"ProjectionType": "ALL"},
-                "BillingMode": "PAY_PER_REQUEST"
+                "Projection": {"ProjectionType": "ALL"}
             }
         ],
         "BillingMode": "PAY_PER_REQUEST",
@@ -113,8 +109,7 @@ TABLE_CONFIG = {
                     {"AttributeName": "vendor_id", "KeyType": "HASH"},
                     {"AttributeName": "created_at", "KeyType": "RANGE"}
                 ],
-                "Projection": {"ProjectionType": "ALL"},
-                "BillingMode": "PAY_PER_REQUEST"
+                "Projection": {"ProjectionType": "ALL"}
             },
             {
                 "IndexName": "po_id-created_at-index",
@@ -122,8 +117,7 @@ TABLE_CONFIG = {
                     {"AttributeName": "po_id", "KeyType": "HASH"},
                     {"AttributeName": "created_at", "KeyType": "RANGE"}
                 ],
-                "Projection": {"ProjectionType": "ALL"},
-                "BillingMode": "PAY_PER_REQUEST"
+                "Projection": {"ProjectionType": "ALL"}
             },
             {
                 "IndexName": "status-due_date-index",
@@ -131,16 +125,14 @@ TABLE_CONFIG = {
                     {"AttributeName": "status", "KeyType": "HASH"},
                     {"AttributeName": "due_date", "KeyType": "RANGE"}
                 ],
-                "Projection": {"ProjectionType": "ALL"},
-                "BillingMode": "PAY_PER_REQUEST"
+                "Projection": {"ProjectionType": "ALL"}
             },
             {
                 "IndexName": "invoice_number-index",
                 "KeySchema": [
                     {"AttributeName": "invoice_number", "KeyType": "HASH"}
                 ],
-                "Projection": {"ProjectionType": "ALL"},
-                "BillingMode": "PAY_PER_REQUEST"
+                "Projection": {"ProjectionType": "ALL"}
             }
         ],
         "BillingMode": "PAY_PER_REQUEST",
@@ -169,8 +161,7 @@ TABLE_CONFIG = {
                 "KeySchema": [
                     {"AttributeName": "invoice_id", "KeyType": "HASH"}
                 ],
-                "Projection": {"ProjectionType": "ALL"},
-                "BillingMode": "PAY_PER_REQUEST"
+                "Projection": {"ProjectionType": "ALL"}
             },
             {
                 "IndexName": "vendor_id-payment_date-index",
@@ -178,8 +169,7 @@ TABLE_CONFIG = {
                     {"AttributeName": "vendor_id", "KeyType": "HASH"},
                     {"AttributeName": "payment_date", "KeyType": "RANGE"}
                 ],
-                "Projection": {"ProjectionType": "ALL"},
-                "BillingMode": "PAY_PER_REQUEST"
+                "Projection": {"ProjectionType": "ALL"}
             },
             {
                 "IndexName": "status-created_at-index",
@@ -187,8 +177,7 @@ TABLE_CONFIG = {
                     {"AttributeName": "status", "KeyType": "HASH"},
                     {"AttributeName": "created_at", "KeyType": "RANGE"}
                 ],
-                "Projection": {"ProjectionType": "ALL"},
-                "BillingMode": "PAY_PER_REQUEST"
+                "Projection": {"ProjectionType": "ALL"}
             }
         ],
         "BillingMode": "PAY_PER_REQUEST",

@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from ..models import APIResponse, PaginatedResponse
 from ..services.dynamodb_service import db_service
 from ..services.s3_service import s3_service
@@ -145,6 +145,11 @@ async def download_export_file(payment_id: str, file_type: str):
         media_type = f"application/{file_type}"
         filename = f"payment_{payment_id}.{file_type}"
         
+        # Ensure datetime objects are serialized properly
+        last_modified = file_data.get('last_modified', '')
+        if hasattr(last_modified, 'isoformat'):
+            last_modified = last_modified.isoformat()
+        
         return JSONResponse(
             content={
                 "success": True,
@@ -153,10 +158,10 @@ async def download_export_file(payment_id: str, file_type: str):
                 "filename": filename,
                 "content": file_data['content'],
                 "content_type": media_type,
-                "last_modified": file_data.get('last_modified', ''),
+                "last_modified": last_modified,
                 "file_key": s3_key,
                 "metadata": file_data.get('metadata', {}),
-                "download_timestamp": datetime.utcnow().isoformat()
+                "download_timestamp": datetime.now(timezone.utc).isoformat()
             },
             media_type="application/json",
             headers={

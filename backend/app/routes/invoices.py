@@ -45,7 +45,7 @@ async def create_invoice(invoice: InvoiceCreate):
             raise HTTPException(status_code=400, detail=f"Invoice number {invoice.invoice_number} already exists")
         
         # Create invoice in DynamoDB
-        invoice_data = invoice.dict()
+        invoice_data = invoice.model_dump(mode='json')
         invoice_data['status'] = 'received'  # Default status
         
         created_invoice_data = await db_service.create_invoice(invoice_data)

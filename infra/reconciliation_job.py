@@ -22,7 +22,7 @@ import boto3
 import json
 import sys
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Any, Optional
 from botocore.exceptions import ClientError
 import uuid
@@ -95,7 +95,7 @@ class ReconciliationJobService:
                 return True
             
             log_id = str(uuid.uuid4())
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             
             audit_entry = {
                 'id': log_id,
@@ -232,7 +232,7 @@ class ReconciliationJobService:
                 ExpressionAttributeNames={'#status': 'status'},
                 ExpressionAttributeValues={
                     ':status': new_status,
-                    ':updated_at': datetime.utcnow().isoformat()
+                    ':updated_at': datetime.now(timezone.utc).isoformat()
                 }
             )
             
@@ -263,7 +263,7 @@ class ReconciliationJobService:
                     details={
                         "error": f"Associated PO {po_id} not found",
                         "invoice_number": invoice_number,
-                        "timestamp": datetime.utcnow().isoformat()
+                        "timestamp": datetime.now(timezone.utc).isoformat()
                     }
                 )
                 return False
@@ -294,7 +294,7 @@ class ReconciliationJobService:
                         },
                         "discrepancies": reconciliation_result["details"]["discrepancies"],
                         "processed_by": "reconciliation_job",
-                        "timestamp": datetime.utcnow().isoformat()
+                        "timestamp": datetime.now(timezone.utc).isoformat()
                     }
                 )
                 
@@ -322,14 +322,14 @@ class ReconciliationJobService:
                     "error": str(e),
                     "invoice_number": invoice_number,
                     "po_id": po_id,
-                    "timestamp": datetime.utcnow().isoformat()
+                    "timestamp": datetime.now(timezone.utc).isoformat()
                 }
             )
             return False
     
     async def run_reconciliation_job(self) -> Dict[str, Any]:
         """Main reconciliation job execution"""
-        start_time = datetime.utcnow()
+        start_time = datetime.now(timezone.utc)
         logger.info(f"Starting invoice reconciliation job at {start_time.isoformat()}")
         
         if self.dry_run:
@@ -355,7 +355,7 @@ class ReconciliationJobService:
                 await self.process_invoice(invoice)
             
             # Calculate execution time
-            end_time = datetime.utcnow()
+            end_time = datetime.now(timezone.utc)
             execution_time = (end_time - start_time).total_seconds()
             
             # Log job completion

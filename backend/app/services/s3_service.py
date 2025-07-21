@@ -1,7 +1,7 @@
 import boto3
 from botocore.exceptions import ClientError
 from typing import Dict, Any, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 import logging
 import json
 
@@ -13,8 +13,8 @@ class S3Service:
     def __init__(self, region_name: str = "us-east-1"):
         self.s3_client = boto3.client('s3', region_name=region_name)
         self.region_name = region_name
-        # S3 bucket name from the AWS resources documentation
-        self.bucket_name = "p2p-payment-xml-storage-20250721-005155-6839"
+        # S3 bucket name from the initialized infrastructure
+        self.bucket_name = "p2p-automation-payments"
     
     async def upload_payment_file(self, 
                                 payment_id: str, 
@@ -45,7 +45,7 @@ class S3Service:
                 'amount': str(payment_data.get('amount', '0.00')),
                 'status': str(payment_data.get('status', '')),
                 'file_format': file_format,
-                'upload_timestamp': datetime.utcnow().isoformat(),
+                'upload_timestamp': datetime.now(timezone.utc).isoformat(),
                 'content_type': f'application/{file_format}'
             }
             
@@ -57,23 +57,21 @@ class S3Service:
                     tag_set.append({'Key': key, 'Value': str(value)[:256]})  # S3 tag values limited to 256 chars
             
             # Upload file to S3
-            response = self.s3_client.put_object(
-                Bucket=self.bucket_name,
-                Key=file_key,
-                Body=content.encode('utf-8'),
-                ContentType=f'application/{file_format}',
-                Metadata=metadata,
-                ServerSideEncryption='AES256',
-                TaggingDirective='REPLACE' if tag_set else None
-            )
+            put_object_kwargs = {
+                'Bucket': self.bucket_name,
+                'Key': file_key,
+                'Body': content.encode('utf-8'),
+                'ContentType': f'application/{file_format}',
+                'Metadata': metadata,
+                'ServerSideEncryption': 'AES256'
+            }
             
-            # Add tags to the object if we have any
+            # Add tagging if we have tags (during put_object)
             if tag_set:
-                self.s3_client.put_object_tagging(
-                    Bucket=self.bucket_name,
-                    Key=file_key,
-                    Tagging={'TagSet': tag_set}
-                )
+                tag_string = '&'.join([f"{tag['Key']}={tag['Value']}" for tag in tag_set])
+                put_object_kwargs['Tagging'] = tag_string
+            
+            response = self.s3_client.put_object(**put_object_kwargs)
             
             # Generate S3 URL
             s3_url = f"https://{self.bucket_name}.s3.{self.region_name}.amazonaws.com/{file_key}"
@@ -266,6 +264,10 @@ class S3Service:
             all_files = []
             
             for obj in response.get('Contents', []):
+                # Skip .gitkeep files and directories
+                if obj['Key'].endswith('.gitkeep') or obj['Key'].endswith('/'):
+                    continue
+                    
                 try:
                     # Get object metadata and tags
                     obj_metadata = self.s3_client.head_object(

@@ -41,8 +41,10 @@ async def list_vendors(
 async def create_vendor(vendor: VendorCreate):
     """Create a new vendor"""
     try:
-        # Create vendor in DynamoDB
-        vendor_data = await db_service.create_vendor(vendor.dict())
+        # Create vendor in DynamoDB - use model_dump with by_alias=True to properly serialize enums
+        vendor_dict = vendor.model_dump(mode='json')  # This properly serializes enums to their values
+        
+        vendor_data = await db_service.create_vendor(vendor_dict)
         
         # Convert to Vendor object
         new_vendor = Vendor(**vendor_data)

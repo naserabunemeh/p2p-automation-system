@@ -51,7 +51,7 @@ async def create_purchase_order(po: PurchaseOrderCreate):
             raise HTTPException(status_code=400, detail=f"Vendor with ID {po.vendor_id} not found")
         
         # Create purchase order in DynamoDB
-        po_data = await db_service.create_purchase_order(po.dict())
+        po_data = await db_service.create_purchase_order(po.model_dump(mode='json'))
         
         # Convert to PurchaseOrder object
         new_po = PurchaseOrder(**po_data)

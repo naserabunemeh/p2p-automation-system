@@ -145,6 +145,8 @@ class PaymentUpdate(BaseModel):
     status: Optional[Literal["approved", "sent", "failed"]] = None
     xml_s3_key: Optional[str] = None
     json_s3_key: Optional[str] = None
+    workday_confirmed_at: Optional[str] = None  # ISO datetime string
+    workday_callback_received: Optional[bool] = None
 
 class Payment(PaymentBase, BaseEntity):
     pass

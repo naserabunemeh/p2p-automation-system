@@ -23,7 +23,7 @@ BUCKET_CONFIG = {
         "versioning": True,
         "lifecycle_rules": [
             {
-                "Id": "payment-files-lifecycle",
+                "ID": "payment-files-lifecycle",
                 "Status": "Enabled",
                 "Filter": {"Prefix": "payments/"},
                 "Transitions": [
@@ -55,7 +55,7 @@ BUCKET_CONFIG = {
         "versioning": True,
         "lifecycle_rules": [
             {
-                "Id": "documents-lifecycle",
+                "ID": "documents-lifecycle",
                 "Status": "Enabled",
                 "Filter": {"Prefix": "documents/"},
                 "Transitions": [
@@ -83,7 +83,7 @@ BUCKET_CONFIG = {
         "versioning": True,
         "lifecycle_rules": [
             {
-                "Id": "backups-lifecycle",
+                "ID": "backups-lifecycle",
                 "Status": "Enabled",
                 "Filter": {"Prefix": "backups/"},
                 "Transitions": [
@@ -114,7 +114,7 @@ BUCKET_CONFIG = {
         "versioning": False,
         "lifecycle_rules": [
             {
-                "Id": "reports-lifecycle",
+                "ID": "reports-lifecycle",
                 "Status": "Enabled",
                 "Filter": {"Prefix": "reports/"},
                 "Transitions": [
