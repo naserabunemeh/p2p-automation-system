@@ -451,17 +451,190 @@ S3_BUCKET = "p2p-payment-xml-storage-20250721-005155-6839"
 
 ---
 
+---
+
+## 🤖 Automated Reconciliation System
+
+### **reconciliation_job.py - EventBridge Ready**
+
+**Purpose**: Automated batch processing of invoice reconciliation  
+**Location**: `infra/reconciliation_job.py`  
+**Entry Points**: CLI script OR AWS Lambda function
+
+### **CLI Usage**:
+```bash
+# Dry run mode (no changes made)
+python infra/reconciliation_job.py --region us-east-1 --dry-run
+
+# Production run
+python infra/reconciliation_job.py --region us-east-1
+
+# With custom log level
+python infra/reconciliation_job.py --region us-east-1 --log-level DEBUG
+```
+
+### **Job Process Flow**:
+1. **Scan**: InvoicesTable for status == "received"
+2. **Validate**: Each invoice against its associated PO
+3. **Update**: Invoice status to "matched" or "rejected"  
+4. **Log**: All results to AuditLogTable with type "INVOICE_ACTION"
+5. **Report**: Comprehensive statistics and execution metrics
+
+### **Validation Logic Summary**:
+- ✅ **PO Status Check**: Must be "approved" or "sent"
+- ✅ **Amount Validation**: ±1% tolerance for business flexibility
+- ✅ **Item Count Match**: Line items must match between invoice and PO
+- ✅ **Detailed Analysis**: Item-by-item quantity and price comparison
+- ✅ **Discrepancy Reporting**: Comprehensive error details for rejected invoices
+
+### **Statistics Tracking**:
+```json
+{
+  "processed": 0,
+  "matched": 0,
+  "rejected": 0,
+  "errors": 0,
+  "skipped": 0
+}
+```
+
+### **Lambda Integration**:
+- **Function**: `lambda_handler(event, context)` ready for deployment
+- **Trigger**: AWS EventBridge scheduled rules
+- **Runtime**: Python 3.9+ compatible
+- **Memory**: 256MB recommended (handles batch processing)
+- **Timeout**: 5-15 minutes (depending on invoice volume)
+
+---
+
+## 🔮 Future AWS EventBridge Integration Plan
+
+### **Scheduled Automation**:
+- **Trigger Frequency**: Every 30 minutes during business hours
+- **EventBridge Rule**: `cron(0/30 9-17 ? * MON-FRI *)`
+- **Lambda Deployment**: `reconciliation-job-lambda`
+- **IAM Permissions**: DynamoDB read/write, CloudWatch logs
+
+### **EventBridge Rule Configuration**:
+```json
+{
+  "ScheduleExpression": "cron(0/30 9-17 ? * MON-FRI *)",
+  "Description": "Trigger invoice reconciliation every 30 minutes during business hours",
+  "State": "ENABLED",
+  "Targets": [
+    {
+      "Id": "ReconciliationJobTarget",
+      "Arn": "arn:aws:lambda:us-east-1:420713464003:function:reconciliation-job-lambda"
+    }
+  ]
+}
+```
+
+### **CloudWatch Integration**:
+- **Metrics**: Processing statistics, execution time, error rates
+- **Alarms**: Failed jobs, high error rates, timeout alerts
+- **Dashboards**: Real-time reconciliation monitoring
+
+### **Deployment Commands** (Future):
+```bash
+# Package Lambda function
+zip reconciliation-job.zip reconciliation_job.py
+
+# Deploy Lambda
+aws lambda create-function \
+  --function-name reconciliation-job-lambda \
+  --runtime python3.9 \
+  --role arn:aws:iam::420713464003:role/lambda-execution-role \
+  --handler reconciliation_job.lambda_handler \
+  --zip-file fileb://reconciliation-job.zip
+
+# Create EventBridge rule
+aws events put-rule \
+  --name "invoice-reconciliation-schedule" \
+  --schedule-expression "cron(0/30 9-17 ? * MON-FRI *)" \
+  --description "Trigger invoice reconciliation every 30 minutes"
+
+# Add Lambda target
+aws events put-targets \
+  --rule invoice-reconciliation-schedule \
+  --targets "Id"="1","Arn"="arn:aws:lambda:us-east-1:420713464003:function:reconciliation-job-lambda"
+```
+
+---
+
+## 📊 Enhanced Audit Logging
+
+### **Invoice Action Types** (INVOICE_ACTION):
+- ✅ **CREATE** - Invoice submission with PO validation
+- ✅ **UPDATE** - Invoice modifications
+- ✅ **DELETE** - Invoice removal
+- ✅ **RECONCILE** - Manual reconciliation via API
+- ✅ **BATCH_RECONCILE** - Automated job reconciliation
+- ✅ **RECONCILE_ERROR** - Failed reconciliation attempts
+- ✅ **JOB_COMPLETE** - Batch job completion statistics
+
+### **Audit Entry Structure for Jobs**:
+```json
+{
+  "id": "uuid",
+  "type": "INVOICE_ACTION",
+  "action": "BATCH_RECONCILE",
+  "entity_type": "Invoice",
+  "entity_id": "invoice_id",
+  "user_id": "reconciliation_job",
+  "timestamp": "2025-01-21T15:30:00Z",
+  "details": {
+    "po_id": "po_id",
+    "invoice_number": "INV-2025-001",
+    "reconciliation_status": "matched|rejected",
+    "validation_summary": {
+      "po_status_valid": true,
+      "total_amount_match": true,
+      "items_match": true,
+      "po_total": 1250.00,
+      "invoice_total": 1248.75,
+      "amount_difference": 1.25
+    },
+    "discrepancies": [],
+    "processed_by": "reconciliation_job"
+  }
+}
+```
+
+---
+
+## 🚀 Complete API Implementation Status
+
+### ✅ **All APIs Fully Implemented & Tested**
+
+**Vendors API**: ✅ COMPLETE  
+**Purchase Orders API**: ✅ COMPLETE  
+**Invoices API**: ✅ COMPLETE  
+
+### **Production Features**:
+- ✅ Real DynamoDB integration (all 5 tables)
+- ✅ Comprehensive audit logging
+- ✅ Advanced validation logic with tolerances
+- ✅ Batch reconciliation automation
+- ✅ CLI and Lambda-ready job processing
+- ✅ Full CRUD operations with proper error handling
+- ✅ Business-ready reconciliation with detailed reporting
+
+---
+
 ## 📞 Support Information
 
 **AWS Account ID**: 420713464003  
 **Primary Region**: us-east-1  
 **Created By**: P2P Automation System Setup  
 **Last Updated**: January 21, 2025  
-**API Implementation**: COMPLETED - Vendors, Purchase Orders & Invoices  
+**API Implementation**: COMPLETED - Full P2P Workflow (Vendors → POs → Invoices → Reconciliation)  
+**Automation**: READY - EventBridge-compatible reconciliation job
 
 **Live API Server**: `http://localhost:8000`  
 **API Documentation**: `http://localhost:8000/docs`  
 **Health Check**: `http://localhost:8000/health`  
+**Reconciliation Job**: `python infra/reconciliation_job.py --help`
 
 For any issues with these resources, ensure your AWS CLI is configured with the correct credentials and region.
 
