@@ -709,5 +709,202 @@ class DynamoDBService:
             )
             raise Exception(f"Failed to reconcile invoice: {str(e)}")
 
+    # Payment operations  
+    async def create_payment(self, payment_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a new payment in DynamoDB"""
+        try:
+            payment_id = str(uuid.uuid4())
+            now = datetime.utcnow()
+            
+            item = {
+                'id': payment_id,
+                'created_at': now,
+                'updated_at': now,
+                **payment_data
+            }
+            
+            prepared_item = self._prepare_item_for_db(item)
+            self.payments_table.put_item(Item=prepared_item)
+            
+            # Create audit log entry
+            await self.create_audit_log(
+                action="CREATE",
+                entity_type="Payment",
+                entity_id=payment_id,
+                details={
+                    "invoice_id": payment_data.get("invoice_id"),
+                    "vendor_id": payment_data.get("vendor_id"),
+                    "payment_amount": payment_data.get("payment_amount"),
+                    "payment_method": payment_data.get("payment_method", "ACH"),
+                    "status": payment_data.get("status", "pending"),
+                    "reference_number": payment_data.get("reference_number")
+                },
+                log_type="PAYMENT_ACTION"
+            )
+            
+            logger.info(f"Created payment with ID: {payment_id}")
+            return self._convert_item_from_db(prepared_item)
+            
+        except ClientError as e:
+            logger.error(f"Error creating payment: {e}")
+            raise Exception(f"Failed to create payment: {str(e)}")
+
+    async def get_payment(self, payment_id: str) -> Optional[Dict[str, Any]]:
+        """Get a payment by ID"""
+        try:
+            response = self.payments_table.get_item(Key={'id': payment_id})
+            
+            if 'Item' not in response:
+                return None
+                
+            return self._convert_item_from_db(response['Item'])
+            
+        except ClientError as e:
+            logger.error(f"Error getting payment {payment_id}: {e}")
+            raise Exception(f"Failed to get payment: {str(e)}")
+
+    async def update_payment(self, payment_id: str, update_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Update a payment"""
+        try:
+            # First check if payment exists
+            existing_payment = await self.get_payment(payment_id)
+            if not existing_payment:
+                raise Exception("Payment not found")
+            
+            # Prepare update expression
+            update_data['updated_at'] = datetime.utcnow()
+            prepared_data = self._prepare_item_for_db(update_data)
+            
+            update_expression = "SET "
+            expression_attribute_values = {}
+            expression_attribute_names = {}
+            
+            for key, value in prepared_data.items():
+                attr_name = f"#{key}"
+                attr_value = f":{key}"
+                update_expression += f"{attr_name} = {attr_value}, "
+                expression_attribute_names[attr_name] = key
+                expression_attribute_values[attr_value] = value
+            
+            update_expression = update_expression.rstrip(", ")
+            
+            response = self.payments_table.update_item(
+                Key={'id': payment_id},
+                UpdateExpression=update_expression,
+                ExpressionAttributeNames=expression_attribute_names,
+                ExpressionAttributeValues=expression_attribute_values,
+                ReturnValues="ALL_NEW"
+            )
+            
+            # Create audit log entry
+            await self.create_audit_log(
+                action="UPDATE",
+                entity_type="Payment",
+                entity_id=payment_id,
+                details={
+                    "updated_fields": list(update_data.keys()),
+                    "previous_status": existing_payment.get("status"),
+                    "new_status": update_data.get("status"),
+                    "changes": update_data
+                },
+                log_type="PAYMENT_ACTION"
+            )
+            
+            logger.info(f"Updated payment with ID: {payment_id}")
+            return self._convert_item_from_db(response['Attributes'])
+            
+        except ClientError as e:
+            logger.error(f"Error updating payment {payment_id}: {e}")
+            raise Exception(f"Failed to update payment: {str(e)}")
+
+    async def list_payments(self, status_filter: Optional[str] = None, vendor_id_filter: Optional[str] = None, invoice_id_filter: Optional[str] = None) -> List[Dict[str, Any]]:
+        """List all payments with optional filters"""
+        try:
+            filter_expression = None
+            filter_conditions = []
+            
+            if status_filter:
+                filter_conditions.append(boto3.dynamodb.conditions.Attr('status').eq(status_filter))
+            if vendor_id_filter:
+                filter_conditions.append(boto3.dynamodb.conditions.Attr('vendor_id').eq(vendor_id_filter))
+            if invoice_id_filter:
+                filter_conditions.append(boto3.dynamodb.conditions.Attr('invoice_id').eq(invoice_id_filter))
+            
+            # Combine filter conditions
+            if len(filter_conditions) == 1:
+                filter_expression = filter_conditions[0]
+            elif len(filter_conditions) > 1:
+                filter_expression = filter_conditions[0]
+                for condition in filter_conditions[1:]:
+                    filter_expression = filter_expression & condition
+            
+            if filter_expression:
+                response = self.payments_table.scan(FilterExpression=filter_expression)
+            else:
+                response = self.payments_table.scan()
+            
+            items = [self._convert_item_from_db(item) for item in response.get('Items', [])]
+            
+            logger.info(f"Retrieved {len(items)} payments")
+            return items
+            
+        except ClientError as e:
+            logger.error(f"Error listing payments: {e}")
+            raise Exception(f"Failed to list payments: {str(e)}")
+
+    async def approve_invoice_and_create_payment(self, invoice_id: str, approved_by: str) -> Dict[str, Any]:
+        """Approve a reconciled invoice and create payment record"""
+        try:
+            # Get the invoice
+            invoice = await self.get_invoice(invoice_id)
+            if not invoice:
+                raise Exception("Invoice not found")
+            
+            # Check if invoice is in reconciled/matched status
+            if invoice.get('status') != 'matched':
+                raise Exception(f"Cannot approve invoice with status '{invoice.get('status')}'. Invoice must be 'matched'.")
+            
+            # Update invoice status to approved
+            await self.update_invoice(invoice_id, {
+                'status': 'approved',
+                'approved_by': approved_by,
+                'approved_at': datetime.utcnow()
+            })
+            
+            # Create payment record
+            payment_data = {
+                'invoice_id': invoice_id,
+                'vendor_id': invoice.get('vendor_id'),
+                'payment_amount': invoice.get('total_amount'),
+                'payment_method': 'ACH',
+                'status': 'processing',
+                'processed_by': approved_by,
+                'reference_number': f"PAY-{str(uuid.uuid4())[:8].upper()}",
+                'payment_date': datetime.utcnow()
+            }
+            
+            payment = await self.create_payment(payment_data)
+            
+            # Log the approval action
+            await self.create_audit_log(
+                action="APPROVE",
+                entity_type="Invoice",
+                entity_id=invoice_id,
+                details={
+                    "approved_by": approved_by,
+                    "payment_id": payment.get('id'),
+                    "payment_amount": payment_data['payment_amount'],
+                    "reference_number": payment_data['reference_number']
+                },
+                log_type="PAYMENT_ACTION"
+            )
+            
+            logger.info(f"Approved invoice {invoice_id} and created payment {payment.get('id')}")
+            return payment
+            
+        except ClientError as e:
+            logger.error(f"Error approving invoice {invoice_id}: {e}")
+            raise Exception(f"Failed to approve invoice: {str(e)}")
+
 # Global service instance
 db_service = DynamoDBService() 

@@ -1,15 +1,22 @@
-from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import Response
+from fastapi import APIRouter, HTTPException, Query, Body
+from fastapi.responses import JSONResponse
 from typing import List, Optional
+from pydantic import BaseModel
 from ..models import Payment, PaymentCreate, PaymentUpdate, APIResponse, PaginatedResponse, PaymentStatus
+from ..services.dynamodb_service import db_service
+from ..services.s3_service import s3_service
+from ..services.xml_generator import XMLGenerator
+from datetime import datetime
 import uuid
 import json
-from datetime import datetime
+import logging
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# In-memory storage for development (will be replaced with DynamoDB)
-payments_db = {}
+# Request models for specific endpoints
+class ApprovePaymentRequest(BaseModel):
+    approved_by: str
 
 @router.get("/", response_model=PaginatedResponse)
 async def list_payments(
@@ -20,205 +27,259 @@ async def list_payments(
     invoice_id: Optional[str] = Query(None, description="Filter by invoice ID")
 ):
     """List all payments with pagination and optional filters"""
-    payments_list = list(payments_db.values())
-    
-    # Filter by status if provided
-    if status:
-        payments_list = [p for p in payments_list if p.status == status]
-    
-    # Filter by vendor_id if provided
-    if vendor_id:
-        payments_list = [p for p in payments_list if p.vendor_id == vendor_id]
-    
-    # Filter by invoice_id if provided
-    if invoice_id:
-        payments_list = [p for p in payments_list if p.invoice_id == invoice_id]
-    
-    # Pagination
-    total = len(payments_list)
-    start = (page - 1) * size
-    end = start + size
-    items = payments_list[start:end]
-    
-    return PaginatedResponse(
-        items=items,
-        total=total,
-        page=page,
-        size=size,
-        pages=(total + size - 1) // size
-    )
+    try:
+        # Get payments from DynamoDB with filters
+        payments = await db_service.list_payments(
+            status_filter=status.value if status else None,
+            vendor_id_filter=vendor_id,
+            invoice_id_filter=invoice_id
+        )
+        
+        # Apply pagination
+        total = len(payments)
+        start = (page - 1) * size
+        end = start + size
+        items = payments[start:end]
+        
+        return PaginatedResponse(
+            items=items,
+            total=total,
+            page=page,
+            size=size,
+            pages=(total + size - 1) // size if total > 0 else 0
+        )
+        
+    except Exception as e:
+        logger.error(f"Error listing payments: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to list payments: {str(e)}")
 
-@router.post("/", response_model=APIResponse)
-async def create_payment(payment: PaymentCreate):
-    """Create a new payment"""
-    payment_id = str(uuid.uuid4())
-    now = datetime.utcnow()
-    
-    new_payment = Payment(
-        id=payment_id,
-        created_at=now,
-        updated_at=now,
-        **payment.dict()
-    )
-    
-    payments_db[payment_id] = new_payment
-    
-    return APIResponse(
-        success=True,
-        message="Payment created successfully",
-        data=new_payment
-    )
+@router.post("/{invoice_id}/approve", response_model=APIResponse)
+async def approve_payment(invoice_id: str, request: ApprovePaymentRequest):
+    """
+    Approve a reconciled invoice and create a payment record.
+    Generates Workday-compatible XML and JSON files and uploads to S3.
+    """
+    try:
+        logger.info(f"Starting payment approval process for invoice {invoice_id}")
+        
+        # Step 1: Approve invoice and create payment record
+        payment = await db_service.approve_invoice_and_create_payment(
+            invoice_id=invoice_id,
+            approved_by=request.approved_by
+        )
+        
+        # Step 2: Get related data for complete payment information
+        invoice = await db_service.get_invoice(invoice_id)
+        vendor = await db_service.get_vendor(payment['vendor_id'])
+        
+        # Enhance payment data with related information
+        enhanced_payment = {
+            **payment,
+            'vendor_name': vendor.get('name') if vendor else 'Unknown Vendor',
+            'vendor_email': vendor.get('email') if vendor else '',
+            'invoice_number': invoice.get('invoice_number') if invoice else '',
+            'invoice_date': invoice.get('invoice_date') if invoice else None,
+            'due_date': invoice.get('due_date') if invoice else None
+        }
+        
+        # Step 3: Generate XML content using XMLGenerator
+        xml_content = XMLGenerator.generate_payment_xml(enhanced_payment)
+        
+        # Step 4: Generate JSON content
+        json_content = json.dumps(enhanced_payment, indent=2, default=str)
+        
+        # Step 5: Upload XML file to S3
+        xml_upload_result = await s3_service.upload_payment_file(
+            payment_id=payment['id'],
+            content=xml_content,
+            file_format='xml',
+            payment_data=enhanced_payment
+        )
+        
+        # Step 6: Upload JSON file to S3
+        json_upload_result = await s3_service.upload_payment_file(
+            payment_id=payment['id'],
+            content=json_content,
+            file_format='json',
+            payment_data=enhanced_payment
+        )
+        
+        # Step 7: Update payment with S3 file information
+        if xml_upload_result.get('success') or json_upload_result.get('success'):
+            s3_metadata = {
+                'xml_file': xml_upload_result if xml_upload_result.get('success') else None,
+                'json_file': json_upload_result if json_upload_result.get('success') else None
+            }
+            
+            await db_service.update_payment(payment['id'], {
+                's3_files': s3_metadata
+            })
+        
+        # Step 8: Prepare response
+        response_data = {
+            'payment': enhanced_payment,
+            'files_generated': {
+                'xml': xml_upload_result,
+                'json': json_upload_result
+            },
+            'invoice_id': invoice_id,
+            'approved_by': request.approved_by,
+            'approval_timestamp': datetime.utcnow().isoformat()
+        }
+        
+        logger.info(f"Payment approval completed for invoice {invoice_id}, payment {payment['id']}")
+        
+        return APIResponse(
+            success=True,
+            message=f"Invoice {invoice_id} approved and payment {payment['id']} created successfully. XML and JSON files uploaded to S3.",
+            data=response_data
+        )
+        
+    except Exception as e:
+        logger.error(f"Error approving payment for invoice {invoice_id}: {e}")
+        if "Invoice not found" in str(e):
+            raise HTTPException(status_code=404, detail=str(e))
+        elif "Cannot approve invoice" in str(e):
+            raise HTTPException(status_code=400, detail=str(e))
+        else:
+            raise HTTPException(status_code=500, detail=f"Failed to approve payment: {str(e)}")
 
 @router.get("/{payment_id}", response_model=APIResponse)
 async def get_payment(payment_id: str):
     """Get a payment by ID"""
-    if payment_id not in payments_db:
-        raise HTTPException(status_code=404, detail="Payment not found")
-    
-    return APIResponse(
-        success=True,
-        message="Payment retrieved successfully",
-        data=payments_db[payment_id]
-    )
+    try:
+        payment = await db_service.get_payment(payment_id)
+        
+        if not payment:
+            raise HTTPException(status_code=404, detail="Payment not found")
+        
+        # Get related S3 files if they exist
+        s3_files = None
+        if payment.get('s3_files'):
+            s3_files = await s3_service.list_payment_files(payment_id)
+        
+        response_data = {
+            'payment': payment,
+            's3_files': s3_files
+        }
+        
+        return APIResponse(
+            success=True,
+            message="Payment retrieved successfully",
+            data=response_data
+        )
+        
+    except Exception as e:
+        logger.error(f"Error getting payment {payment_id}: {e}")
+        if "Payment not found" in str(e):
+            raise HTTPException(status_code=404, detail=str(e))
+        else:
+            raise HTTPException(status_code=500, detail=f"Failed to get payment: {str(e)}")
 
 @router.put("/{payment_id}", response_model=APIResponse)
 async def update_payment(payment_id: str, payment_update: PaymentUpdate):
     """Update a payment"""
-    if payment_id not in payments_db:
-        raise HTTPException(status_code=404, detail="Payment not found")
-    
-    existing_payment = payments_db[payment_id]
-    update_data = payment_update.dict(exclude_unset=True)
-    
-    # Update fields
-    for field, value in update_data.items():
-        setattr(existing_payment, field, value)
-    
-    existing_payment.updated_at = datetime.utcnow()
-    payments_db[payment_id] = existing_payment
-    
-    return APIResponse(
-        success=True,
-        message="Payment updated successfully",
-        data=existing_payment
-    )
-
-@router.delete("/{payment_id}", response_model=APIResponse)
-async def delete_payment(payment_id: str):
-    """Delete a payment"""
-    if payment_id not in payments_db:
-        raise HTTPException(status_code=404, detail="Payment not found")
-    
-    deleted_payment = payments_db.pop(payment_id)
-    
-    return APIResponse(
-        success=True,
-        message="Payment deleted successfully",
-        data={"id": payment_id, "reference_number": deleted_payment.reference_number}
-    )
-
-@router.post("/{payment_id}/process", response_model=APIResponse)
-async def process_payment(payment_id: str, processed_by: str):
-    """Process a payment"""
-    if payment_id not in payments_db:
-        raise HTTPException(status_code=404, detail="Payment not found")
-    
-    payment = payments_db[payment_id]
-    
-    if payment.status != PaymentStatus.PENDING:
-        raise HTTPException(
-            status_code=400, 
-            detail=f"Cannot process payment with status: {payment.status}"
+    try:
+        # Validate payment exists
+        existing_payment = await db_service.get_payment(payment_id)
+        if not existing_payment:
+            raise HTTPException(status_code=404, detail="Payment not found")
+        
+        # Prepare update data
+        update_data = payment_update.dict(exclude_unset=True)
+        
+        # Update payment in DynamoDB
+        updated_payment = await db_service.update_payment(payment_id, update_data)
+        
+        return APIResponse(
+            success=True,
+            message="Payment updated successfully",
+            data=updated_payment
         )
-    
-    payment.status = PaymentStatus.PROCESSING
-    payment.processed_by = processed_by
-    payment.payment_date = datetime.utcnow()
-    payment.reference_number = f"PAY-{payment_id[:8].upper()}"
-    payment.updated_at = datetime.utcnow()
-    
-    payments_db[payment_id] = payment
-    
-    return APIResponse(
-        success=True,
-        message="Payment processing initiated successfully",
-        data=payment
-    )
+        
+    except Exception as e:
+        logger.error(f"Error updating payment {payment_id}: {e}")
+        if "Payment not found" in str(e):
+            raise HTTPException(status_code=404, detail=str(e))
+        else:
+            raise HTTPException(status_code=500, detail=f"Failed to update payment: {str(e)}")
 
-@router.post("/{payment_id}/complete", response_model=APIResponse)
-async def complete_payment(payment_id: str):
-    """Mark a payment as completed"""
-    if payment_id not in payments_db:
-        raise HTTPException(status_code=404, detail="Payment not found")
-    
-    payment = payments_db[payment_id]
-    
-    if payment.status != PaymentStatus.PROCESSING:
-        raise HTTPException(
-            status_code=400, 
-            detail=f"Cannot complete payment with status: {payment.status}"
+# Additional utility endpoints
+@router.get("/{payment_id}/files", response_model=APIResponse)
+async def get_payment_files(payment_id: str):
+    """Get all S3 files for a payment"""
+    try:
+        # Validate payment exists
+        payment = await db_service.get_payment(payment_id)
+        if not payment:
+            raise HTTPException(status_code=404, detail="Payment not found")
+        
+        # Get S3 files
+        files_info = await s3_service.list_payment_files(payment_id)
+        
+        return APIResponse(
+            success=True,
+            message=f"Retrieved {files_info.get('file_count', 0)} files for payment {payment_id}",
+            data=files_info
         )
-    
-    payment.status = PaymentStatus.COMPLETED
-    payment.updated_at = datetime.utcnow()
-    
-    payments_db[payment_id] = payment
-    
-    return APIResponse(
-        success=True,
-        message="Payment completed successfully",
-        data=payment
-    )
+        
+    except Exception as e:
+        logger.error(f"Error getting files for payment {payment_id}: {e}")
+        if "Payment not found" in str(e):
+            raise HTTPException(status_code=404, detail=str(e))
+        else:
+            raise HTTPException(status_code=500, detail=f"Failed to get payment files: {str(e)}")
 
-@router.get("/{payment_id}/xml")
-async def get_payment_xml(payment_id: str):
-    """Generate XML payment file"""
-    if payment_id not in payments_db:
-        raise HTTPException(status_code=404, detail="Payment not found")
-    
-    payment = payments_db[payment_id]
-    
-    # Generate XML content (basic structure)
-    xml_content = f"""<?xml version="1.0" encoding="UTF-8"?>
-<payment xmlns="http://www.w3.org/2001/XMLSchema-instance">
-    <payment_id>{payment.id}</payment_id>
-    <invoice_id>{payment.invoice_id}</invoice_id>
-    <vendor_id>{payment.vendor_id}</vendor_id>
-    <payment_amount>{payment.payment_amount}</payment_amount>
-    <payment_method>{payment.payment_method}</payment_method>
-    <payment_date>{payment.payment_date.isoformat() if payment.payment_date else ''}</payment_date>
-    <reference_number>{payment.reference_number or ''}</reference_number>
-    <status>{payment.status}</status>
-    <processed_by>{payment.processed_by or ''}</processed_by>
-    <created_at>{payment.created_at.isoformat() if payment.created_at else ''}</created_at>
-    <updated_at>{payment.updated_at.isoformat() if payment.updated_at else ''}</updated_at>
-    <notes>{payment.notes or ''}</notes>
-</payment>"""
-    
-    return Response(
-        content=xml_content,
-        media_type="application/xml",
-        headers={"Content-Disposition": f"attachment; filename=payment_{payment_id}.xml"}
-    )
-
-@router.get("/{payment_id}/json")
-async def get_payment_json(payment_id: str):
-    """Generate JSON payment file"""
-    if payment_id not in payments_db:
-        raise HTTPException(status_code=404, detail="Payment not found")
-    
-    payment = payments_db[payment_id]
-    
-    # Convert payment to dict and handle datetime serialization
-    payment_dict = payment.dict()
-    for key, value in payment_dict.items():
-        if isinstance(value, datetime):
-            payment_dict[key] = value.isoformat()
-    
-    json_content = json.dumps(payment_dict, indent=2, default=str)
-    
-    return Response(
-        content=json_content,
-        media_type="application/json",
-        headers={"Content-Disposition": f"attachment; filename=payment_{payment_id}.json"}
-    ) 
+@router.get("/{payment_id}/files/{file_format}")
+async def download_payment_file(payment_id: str, file_format: str):
+    """Download payment file (XML or JSON) from S3"""
+    try:
+        if file_format not in ['xml', 'json']:
+            raise HTTPException(status_code=400, detail="File format must be 'xml' or 'json'")
+        
+        # Validate payment exists
+        payment = await db_service.get_payment(payment_id)
+        if not payment:
+            raise HTTPException(status_code=404, detail="Payment not found")
+        
+        # List files to find the requested format
+        files_info = await s3_service.list_payment_files(payment_id)
+        
+        if not files_info.get('success'):
+            raise HTTPException(status_code=500, detail="Failed to retrieve file list from S3")
+        
+        # Find file with matching format
+        target_file = None
+        for file_info in files_info.get('files', []):
+            if file_info['key'].endswith(f'.{file_format}'):
+                target_file = file_info
+                break
+        
+        if not target_file:
+            raise HTTPException(status_code=404, detail=f"{file_format.upper()} file not found for payment {payment_id}")
+        
+        # Get file content from S3
+        file_data = await s3_service.get_payment_file(target_file['key'])
+        
+        if not file_data.get('success'):
+            raise HTTPException(status_code=500, detail=f"Failed to retrieve {file_format.upper()} file from S3")
+        
+        # Return file content with appropriate headers
+        media_type = f"application/{file_format}"
+        filename = f"payment_{payment_id}.{file_format}"
+        
+        return JSONResponse(
+            content={
+                "filename": filename,
+                "content": file_data['content'],
+                "content_type": media_type,
+                "last_modified": file_data.get('last_modified', ''),
+                "file_key": target_file['key']
+            },
+            media_type="application/json",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+        
+    except Exception as e:
+        logger.error(f"Error downloading {file_format} file for payment {payment_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to download file: {str(e)}") 
