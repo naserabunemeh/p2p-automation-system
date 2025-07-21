@@ -339,15 +339,24 @@ class DynamoDBService:
             raise Exception(f"Failed to list purchase orders: {str(e)}")
     
     # Audit logging operations
-    async def create_audit_log(self, action: str, entity_type: str, entity_id: str, details: Dict[str, Any], user_id: Optional[str] = None) -> Dict[str, Any]:
+    async def create_audit_log(self, action: str, entity_type: str, entity_id: str, details: Dict[str, Any], user_id: Optional[str] = None, log_type: Optional[str] = None) -> Dict[str, Any]:
         """Create an audit log entry"""
         try:
             log_id = str(uuid.uuid4())
             now = datetime.utcnow()
             
+            # Determine log type based on entity type if not provided
+            if not log_type:
+                if entity_type == "Invoice":
+                    log_type = "INVOICE_ACTION"
+                elif entity_type == "PurchaseOrder":
+                    log_type = "PO_ACTION"
+                else:
+                    log_type = f"{entity_type.upper()}_ACTION"
+            
             audit_entry = {
                 'id': log_id,
-                'type': 'PO_ACTION',
+                'type': log_type,
                 'action': action,
                 'entity_type': entity_type,
                 'entity_id': entity_id,
@@ -557,46 +566,87 @@ class DynamoDBService:
             raise Exception(f"Failed to list invoices: {str(e)}")
     
     async def reconcile_invoice_with_po(self, invoice_id: str, invoice_data: Dict[str, Any], po_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Reconcile an invoice with its associated purchase order"""
+        """
+        Enhanced Invoice Validation Logic - Part B
+        Match invoice items and total_amount to the corresponding PO
+        """
         try:
             reconciliation_details = {
                 "total_amount_match": False,
                 "items_match": False,
                 "po_status_valid": False,
+                "detailed_item_analysis": [],
                 "discrepancies": []
             }
             
-            # Check if PO is in a valid status for reconciliation
+            logger.info(f"Starting invoice reconciliation for Invoice {invoice_id} with PO {po_data.get('id')}")
+            
+            # 1. Check if PO is in a valid status for reconciliation
             po_status = po_data.get("status", "").lower()
             if po_status in ["approved", "sent"]:
                 reconciliation_details["po_status_valid"] = True
+                logger.info(f"PO status validation passed: {po_status}")
             else:
                 reconciliation_details["discrepancies"].append(f"PO status is '{po_status}', expected 'approved' or 'sent'")
+                logger.warning(f"PO status validation failed: {po_status}")
             
-            # Check total amount match (allowing 1% tolerance)
+            # 2. Enhanced total amount validation with detailed reporting
             po_total = float(po_data.get("total_amount", 0))
             invoice_total = float(invoice_data.get("total_amount", 0))
             amount_tolerance = po_total * 0.01  # 1% tolerance
+            amount_difference = abs(po_total - invoice_total)
             
-            if abs(po_total - invoice_total) <= amount_tolerance:
+            if amount_difference <= amount_tolerance:
                 reconciliation_details["total_amount_match"] = True
+                logger.info(f"Total amount validation passed: PO=${po_total:.2f}, Invoice=${invoice_total:.2f}, Diff=${amount_difference:.2f}")
             else:
                 reconciliation_details["discrepancies"].append(
-                    f"Total amount mismatch: PO ${po_total:.2f}, Invoice ${invoice_total:.2f}"
+                    f"Total amount mismatch: PO ${po_total:.2f}, Invoice ${invoice_total:.2f} (Difference: ${amount_difference:.2f}, Tolerance: ${amount_tolerance:.2f})"
                 )
+                logger.warning(f"Total amount validation failed: difference ${amount_difference:.2f} exceeds tolerance ${amount_tolerance:.2f}")
             
-            # Basic items validation (count match)
+            # 3. Enhanced items validation with detailed item-by-item analysis
             po_items = po_data.get("items", [])
             invoice_items = invoice_data.get("items", [])
             
+            # Basic count check
             if len(po_items) == len(invoice_items):
                 reconciliation_details["items_match"] = True
+                logger.info(f"Item count validation passed: {len(po_items)} items")
+                
+                # Detailed item analysis (if counts match)
+                for i, (po_item, inv_item) in enumerate(zip(po_items, invoice_items)):
+                    item_analysis = {
+                        "line_number": i + 1,
+                        "po_item": po_item,
+                        "invoice_item": inv_item,
+                        "match_status": "matched"
+                    }
+                    
+                    # Check individual item details if available
+                    po_qty = po_item.get("quantity", 0)
+                    inv_qty = inv_item.get("quantity", 0)
+                    po_price = po_item.get("unit_price", 0)
+                    inv_price = inv_item.get("unit_price", 0)
+                    
+                    if po_qty != inv_qty:
+                        item_analysis["match_status"] = "quantity_mismatch"
+                        item_analysis["quantity_difference"] = f"PO: {po_qty}, Invoice: {inv_qty}"
+                    
+                    if abs(float(po_price) - float(inv_price)) > 0.01:  # Allow small floating point differences
+                        item_analysis["match_status"] = "price_mismatch"
+                        item_analysis["price_difference"] = f"PO: ${po_price}, Invoice: ${inv_price}"
+                    
+                    reconciliation_details["detailed_item_analysis"].append(item_analysis)
+                    
             else:
+                reconciliation_details["items_match"] = False
                 reconciliation_details["discrepancies"].append(
                     f"Item count mismatch: PO has {len(po_items)} items, Invoice has {len(invoice_items)} items"
                 )
+                logger.warning(f"Item count validation failed: PO={len(po_items)}, Invoice={len(invoice_items)}")
             
-            # Determine reconciliation status
+            # 4. Determine final reconciliation status
             all_checks_passed = (
                 reconciliation_details["total_amount_match"] and
                 reconciliation_details["items_match"] and
@@ -605,21 +655,36 @@ class DynamoDBService:
             
             if all_checks_passed:
                 status = "matched"
-                message = "Invoice successfully matched with purchase order"
+                message = "Invoice successfully matched with purchase order - all validation checks passed"
+                logger.info(f"Invoice {invoice_id} reconciliation successful")
             else:
                 status = "rejected"
-                message = f"Invoice rejected due to {len(reconciliation_details['discrepancies'])} discrepancies"
+                discrepancy_count = len(reconciliation_details['discrepancies'])
+                message = f"Invoice rejected due to {discrepancy_count} validation discrepancies"
+                logger.warning(f"Invoice {invoice_id} reconciliation failed with {discrepancy_count} discrepancies")
             
-            # Create audit log entry for reconciliation
+            # 5. Create comprehensive audit log entry for reconciliation
             await self.create_audit_log(
                 action="RECONCILE",
                 entity_type="Invoice",
                 entity_id=invoice_id,
                 details={
                     "po_id": po_data.get("id"),
+                    "invoice_number": invoice_data.get("invoice_number"),
                     "reconciliation_status": status,
-                    "checks_performed": reconciliation_details,
-                    "discrepancies": reconciliation_details["discrepancies"]
+                    "validation_summary": {
+                        "po_status_valid": reconciliation_details["po_status_valid"],
+                        "total_amount_match": reconciliation_details["total_amount_match"],
+                        "items_match": reconciliation_details["items_match"],
+                        "po_total": po_total,
+                        "invoice_total": invoice_total,
+                        "amount_difference": amount_difference,
+                        "tolerance_used": amount_tolerance,
+                        "item_counts": {"po": len(po_items), "invoice": len(invoice_items)}
+                    },
+                    "detailed_analysis": reconciliation_details["detailed_item_analysis"],
+                    "discrepancies": reconciliation_details["discrepancies"],
+                    "timestamp": datetime.utcnow().isoformat()
                 }
             )
             
@@ -631,6 +696,17 @@ class DynamoDBService:
             
         except Exception as e:
             logger.error(f"Error reconciling invoice {invoice_id}: {e}")
+            # Log the error as well
+            await self.create_audit_log(
+                action="RECONCILE_ERROR",
+                entity_type="Invoice",
+                entity_id=invoice_id,
+                details={
+                    "error": str(e),
+                    "po_id": po_data.get("id", "unknown"),
+                    "timestamp": datetime.utcnow().isoformat()
+                }
+            )
             raise Exception(f"Failed to reconcile invoice: {str(e)}")
 
 # Global service instance
