@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Query, Body
 from fastapi.responses import JSONResponse
 from typing import List, Optional
 from pydantic import BaseModel
-from ..models import Payment, PaymentCreate, PaymentUpdate, APIResponse, PaginatedResponse, PaymentStatus
+from ..models import Payment, PaymentCreate, PaymentUpdate, APIResponse, PaginatedResponse
 from ..services.dynamodb_service import db_service
 from ..services.s3_service import s3_service
 from ..services.xml_generator import XMLGenerator
@@ -22,7 +22,7 @@ class ApprovePaymentRequest(BaseModel):
 async def list_payments(
     page: int = Query(1, ge=1, description="Page number"),
     size: int = Query(10, ge=1, le=100, description="Page size"),
-    status: Optional[PaymentStatus] = Query(None, description="Filter by status"),
+    status: Optional[str] = Query(None, description="Filter by status (approved, sent, failed)"),
     vendor_id: Optional[str] = Query(None, description="Filter by vendor ID"),
     invoice_id: Optional[str] = Query(None, description="Filter by invoice ID")
 ):
@@ -30,7 +30,7 @@ async def list_payments(
     try:
         # Get payments from DynamoDB with filters
         payments = await db_service.list_payments(
-            status_filter=status.value if status else None,
+            status_filter=status,
             vendor_id_filter=vendor_id,
             invoice_id_filter=invoice_id
         )
@@ -105,15 +105,14 @@ async def approve_payment(invoice_id: str, request: ApprovePaymentRequest):
         )
         
         # Step 7: Update payment with S3 file information
-        if xml_upload_result.get('success') or json_upload_result.get('success'):
-            s3_metadata = {
-                'xml_file': xml_upload_result if xml_upload_result.get('success') else None,
-                'json_file': json_upload_result if json_upload_result.get('success') else None
-            }
-            
-            await db_service.update_payment(payment['id'], {
-                's3_files': s3_metadata
-            })
+        update_data = {}
+        if xml_upload_result.get('success'):
+            update_data['xml_s3_key'] = xml_upload_result.get('key')
+        if json_upload_result.get('success'):
+            update_data['json_s3_key'] = json_upload_result.get('key')
+        
+        if update_data:
+            payment = await db_service.update_payment(payment['id'], update_data)
         
         # Step 8: Prepare response
         response_data = {
@@ -155,7 +154,7 @@ async def get_payment(payment_id: str):
         
         # Get related S3 files if they exist
         s3_files = None
-        if payment.get('s3_files'):
+        if payment.get('xml_s3_key') or payment.get('json_s3_key'):
             s3_files = await s3_service.list_payment_files(payment_id)
         
         response_data = {

@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field, EmailStr
 from typing import Optional, List, Dict, Any, Union, Literal
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from enum import Enum
 
@@ -25,12 +25,12 @@ class InvoiceStatus(str, Enum):
     PAID = "paid"
     OVERDUE = "overdue"
 
-class PaymentStatus(str, Enum):
-    PENDING = "pending"
-    PROCESSING = "processing"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
+# PaymentStatus enum removed - now using Literal["approved", "sent", "failed"] in Payment model
+
+# Helper functions
+def utc_now() -> datetime:
+    """Return current UTC datetime using timezone-aware objects"""
+    return datetime.now(timezone.utc)
 
 # Base Models
 class BaseEntity(BaseModel):
@@ -126,25 +126,25 @@ class Invoice(InvoiceBase, BaseEntity):
 class PaymentBase(BaseModel):
     invoice_id: str
     vendor_id: str
-    payment_amount: Decimal = Field(..., gt=0)
-    payment_method: str = "ACH"
-    payment_date: Optional[datetime] = None
-    reference_number: Optional[str] = None
-    status: PaymentStatus = PaymentStatus.PENDING
-    processed_by: Optional[str] = None
-    notes: Optional[str] = None
+    amount: float = Field(..., gt=0)
+    currency: str = "USD"
+    status: Literal["approved", "sent", "failed"] = "approved"
+    approved_at: datetime = Field(default_factory=utc_now)
+    xml_s3_key: Optional[str] = None
+    json_s3_key: Optional[str] = None
 
-class PaymentCreate(PaymentBase):
-    pass
+class PaymentCreate(BaseModel):
+    invoice_id: str
+    vendor_id: str
+    amount: float = Field(..., gt=0)
+    currency: str = "USD"
 
 class PaymentUpdate(BaseModel):
-    payment_amount: Optional[Decimal] = None
-    payment_method: Optional[str] = None
-    payment_date: Optional[datetime] = None
-    reference_number: Optional[str] = None
-    status: Optional[PaymentStatus] = None
-    processed_by: Optional[str] = None
-    notes: Optional[str] = None
+    amount: Optional[float] = Field(None, gt=0)
+    currency: Optional[str] = None
+    status: Optional[Literal["approved", "sent", "failed"]] = None
+    xml_s3_key: Optional[str] = None
+    json_s3_key: Optional[str] = None
 
 class Payment(PaymentBase, BaseEntity):
     pass

@@ -41,14 +41,13 @@ class XMLGenerator:
         
         # Add payment details
         payment_details = ET.SubElement(root, "payment_details")
-        ET.SubElement(payment_details, "payment_amount").text = str(payment_data.get("payment_amount", "0.00"))
-        ET.SubElement(payment_details, "payment_method").text = str(payment_data.get("payment_method", "ACH"))
-        ET.SubElement(payment_details, "currency").text = "USD"
+        ET.SubElement(payment_details, "amount").text = str(payment_data.get("amount", "0.00"))
+        ET.SubElement(payment_details, "currency").text = str(payment_data.get("currency", "USD"))
         
         # Add processing information
         processing = ET.SubElement(root, "processing_info")
-        ET.SubElement(processing, "processed_by").text = str(payment_data.get("processed_by", ""))
-        ET.SubElement(processing, "processing_date").text = XMLGenerator._format_datetime(payment_data.get("updated_at"))
+        ET.SubElement(processing, "approved_at").text = XMLGenerator._format_datetime(payment_data.get("approved_at"))
+        ET.SubElement(processing, "updated_at").text = XMLGenerator._format_datetime(payment_data.get("updated_at"))
         
         # Add notes if present
         if payment_data.get("notes"):

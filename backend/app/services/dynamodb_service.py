@@ -734,10 +734,11 @@ class DynamoDBService:
                 details={
                     "invoice_id": payment_data.get("invoice_id"),
                     "vendor_id": payment_data.get("vendor_id"),
-                    "payment_amount": payment_data.get("payment_amount"),
-                    "payment_method": payment_data.get("payment_method", "ACH"),
-                    "status": payment_data.get("status", "pending"),
-                    "reference_number": payment_data.get("reference_number")
+                    "amount": payment_data.get("amount"),
+                    "currency": payment_data.get("currency", "USD"),
+                    "status": payment_data.get("status", "approved"),
+                    "xml_s3_key": payment_data.get("xml_s3_key"),
+                    "json_s3_key": payment_data.get("json_s3_key")
                 },
                 log_type="PAYMENT_ACTION"
             )
@@ -875,12 +876,10 @@ class DynamoDBService:
             payment_data = {
                 'invoice_id': invoice_id,
                 'vendor_id': invoice.get('vendor_id'),
-                'payment_amount': invoice.get('total_amount'),
-                'payment_method': 'ACH',
-                'status': 'processing',
-                'processed_by': approved_by,
-                'reference_number': f"PAY-{str(uuid.uuid4())[:8].upper()}",
-                'payment_date': datetime.utcnow()
+                'amount': float(invoice.get('total_amount', 0)),
+                'currency': 'USD',
+                'status': 'approved',
+                'approved_at': datetime.utcnow()
             }
             
             payment = await self.create_payment(payment_data)
@@ -893,8 +892,9 @@ class DynamoDBService:
                 details={
                     "approved_by": approved_by,
                     "payment_id": payment.get('id'),
-                    "payment_amount": payment_data['payment_amount'],
-                    "reference_number": payment_data['reference_number']
+                    "amount": payment_data['amount'],
+                    "currency": payment_data['currency'],
+                    "status": payment_data['status']
                 },
                 log_type="PAYMENT_ACTION"
             )
