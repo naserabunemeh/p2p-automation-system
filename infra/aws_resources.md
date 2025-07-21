@@ -373,6 +373,82 @@ S3_BUCKET = "p2p-payment-xml-storage-20250721-005155-6839"
 - ✅ Status transitions properly validated
 - ✅ Pagination and filtering work correctly
 
+### ✅ Invoices API - FULLY IMPLEMENTED
+
+**Base URL**: `/api/v1/invoices`
+
+**Available Endpoints:**
+- `POST /invoices` - Submit an invoice tied to a PO (with PO validation)
+- `GET /invoices/{id}` - Fetch a single invoice
+- `GET /invoices` - List all invoices (with pagination and optional PO/status filtering)
+- `PUT /invoices/{id}/reconcile` - Trigger reconciliation check (validate against PO)
+- `PUT /invoices/{id}` - Update invoice
+- `DELETE /invoices/{id}` - Delete invoice (with audit logging)
+
+**Invoice Model (Simplified):**
+```json
+{
+  "id": "string",
+  "po_id": "string",
+  "invoice_number": "string",
+  "items": [
+    {
+      "description": "string",
+      "quantity": "number",
+      "unit_price": "number"
+    }
+  ],
+  "total_amount": "float",
+  "status": "received|matched|rejected",
+  "submitted_at": "datetime"
+}
+```
+
+**Reconciliation Logic:**
+- ✅ Validates PO status (must be 'approved' or 'sent')
+- ✅ Checks total amount match with 1% tolerance
+- ✅ Verifies item count match between invoice and PO
+- ✅ Automatically updates status to 'matched' or 'rejected'
+- ✅ Provides detailed reconciliation report with discrepancies
+
+---
+
+## 🗄️ DynamoDB Integration - ENHANCED
+
+### **Invoices Operations Added**:
+- ✅ `create_invoice` - Create invoice with PO validation
+- ✅ `get_invoice` - Retrieve invoice by ID
+- ✅ `get_invoice_by_number` - Find invoice by invoice number (duplicate checking)
+- ✅ `update_invoice` - Update invoice with audit logging
+- ✅ `delete_invoice` - Delete invoice with audit logging
+- ✅ `list_invoices` - List invoices with PO and status filtering
+- ✅ `reconcile_invoice_with_po` - Advanced reconciliation logic
+
+### **Invoice Audit Logging**:
+- ✅ **CREATE** - Invoice creation with PO link and details
+- ✅ **UPDATE** - Invoice modifications with change tracking
+- ✅ **DELETE** - Invoice deletion with full record preservation
+- ✅ **RECONCILE** - Reconciliation attempts with detailed results
+
+---
+
+## 📈 API Testing Results - UPDATED
+
+### **Invoice Endpoints** - ✅ ALL IMPLEMENTED
+- Create invoice: `POST /api/v1/invoices/` ✅ (with PO validation)
+- List invoices: `GET /api/v1/invoices/` ✅ (with PO/status filtering)
+- Get invoice: `GET /api/v1/invoices/{id}` ✅
+- Update invoice: `PUT /api/v1/invoices/{id}` ✅
+- Reconcile invoice: `PUT /api/v1/invoices/{id}/reconcile` ✅
+- Delete invoice: `DELETE /api/v1/invoices/{id}` ✅
+
+### **Reconciliation Features**:
+- ✅ PO existence validation before invoice creation
+- ✅ Invoice number uniqueness checking
+- ✅ Intelligent matching logic with tolerance
+- ✅ Detailed discrepancy reporting
+- ✅ Automatic status updates based on reconciliation results
+
 ---
 
 ## 📞 Support Information
@@ -381,7 +457,7 @@ S3_BUCKET = "p2p-payment-xml-storage-20250721-005155-6839"
 **Primary Region**: us-east-1  
 **Created By**: P2P Automation System Setup  
 **Last Updated**: January 21, 2025  
-**API Implementation**: COMPLETED - Vendors & Purchase Orders  
+**API Implementation**: COMPLETED - Vendors, Purchase Orders & Invoices  
 
 **Live API Server**: `http://localhost:8000`  
 **API Documentation**: `http://localhost:8000/docs`  

@@ -376,6 +376,262 @@ class DynamoDBService:
         except Exception as e:
             logger.error(f"Error validating vendor {vendor_id}: {e}")
             return False
+    
+    # Invoice operations
+    async def create_invoice(self, invoice_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a new invoice in DynamoDB"""
+        try:
+            invoice_id = str(uuid.uuid4())
+            now = datetime.utcnow()
+            
+            item = {
+                'id': invoice_id,
+                'created_at': now,
+                'updated_at': now,
+                'submitted_at': now,
+                **invoice_data
+            }
+            
+            prepared_item = self._prepare_item_for_db(item)
+            self.invoices_table.put_item(Item=prepared_item)
+            
+            # Create audit log entry
+            await self.create_audit_log(
+                action="CREATE",
+                entity_type="Invoice",
+                entity_id=invoice_id,
+                details={
+                    "po_id": invoice_data.get("po_id"),
+                    "invoice_number": invoice_data.get("invoice_number"),
+                    "total_amount": invoice_data.get("total_amount"),
+                    "status": invoice_data.get("status", "received"),
+                    "items_count": len(invoice_data.get("items", []))
+                }
+            )
+            
+            logger.info(f"Created invoice with ID: {invoice_id}")
+            return self._convert_item_from_db(prepared_item)
+            
+        except ClientError as e:
+            logger.error(f"Error creating invoice: {e}")
+            raise Exception(f"Failed to create invoice: {str(e)}")
+    
+    async def get_invoice(self, invoice_id: str) -> Optional[Dict[str, Any]]:
+        """Get an invoice by ID"""
+        try:
+            response = self.invoices_table.get_item(Key={'id': invoice_id})
+            
+            if 'Item' not in response:
+                return None
+                
+            return self._convert_item_from_db(response['Item'])
+            
+        except ClientError as e:
+            logger.error(f"Error getting invoice {invoice_id}: {e}")
+            raise Exception(f"Failed to get invoice: {str(e)}")
+    
+    async def get_invoice_by_number(self, invoice_number: str) -> Optional[Dict[str, Any]]:
+        """Get an invoice by invoice number"""
+        try:
+            response = self.invoices_table.scan(
+                FilterExpression=boto3.dynamodb.conditions.Attr('invoice_number').eq(invoice_number)
+            )
+            
+            items = response.get('Items', [])
+            if items:
+                return self._convert_item_from_db(items[0])
+            return None
+            
+        except ClientError as e:
+            logger.error(f"Error getting invoice by number {invoice_number}: {e}")
+            raise Exception(f"Failed to get invoice by number: {str(e)}")
+    
+    async def update_invoice(self, invoice_id: str, update_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Update an invoice"""
+        try:
+            # First check if invoice exists
+            existing_invoice = await self.get_invoice(invoice_id)
+            if not existing_invoice:
+                raise Exception("Invoice not found")
+            
+            # Prepare update expression
+            update_data['updated_at'] = datetime.utcnow()
+            prepared_data = self._prepare_item_for_db(update_data)
+            
+            update_expression = "SET "
+            expression_attribute_values = {}
+            expression_attribute_names = {}
+            
+            for key, value in prepared_data.items():
+                attr_name = f"#{key}"
+                attr_value = f":{key}"
+                update_expression += f"{attr_name} = {attr_value}, "
+                expression_attribute_names[attr_name] = key
+                expression_attribute_values[attr_value] = value
+            
+            update_expression = update_expression.rstrip(", ")
+            
+            response = self.invoices_table.update_item(
+                Key={'id': invoice_id},
+                UpdateExpression=update_expression,
+                ExpressionAttributeNames=expression_attribute_names,
+                ExpressionAttributeValues=expression_attribute_values,
+                ReturnValues="ALL_NEW"
+            )
+            
+            # Create audit log entry
+            await self.create_audit_log(
+                action="UPDATE",
+                entity_type="Invoice",
+                entity_id=invoice_id,
+                details={
+                    "updated_fields": list(update_data.keys()),
+                    "previous_status": existing_invoice.get("status"),
+                    "new_status": update_data.get("status"),
+                    "changes": update_data
+                }
+            )
+            
+            logger.info(f"Updated invoice with ID: {invoice_id}")
+            return self._convert_item_from_db(response['Attributes'])
+            
+        except ClientError as e:
+            logger.error(f"Error updating invoice {invoice_id}: {e}")
+            raise Exception(f"Failed to update invoice: {str(e)}")
+    
+    async def delete_invoice(self, invoice_id: str) -> bool:
+        """Delete an invoice"""
+        try:
+            # First check if invoice exists
+            existing_invoice = await self.get_invoice(invoice_id)
+            if not existing_invoice:
+                raise Exception("Invoice not found")
+            
+            self.invoices_table.delete_item(Key={'id': invoice_id})
+            
+            # Create audit log entry
+            await self.create_audit_log(
+                action="DELETE",
+                entity_type="Invoice",
+                entity_id=invoice_id,
+                details={
+                    "po_id": existing_invoice.get("po_id"),
+                    "invoice_number": existing_invoice.get("invoice_number"),
+                    "total_amount": existing_invoice.get("total_amount"),
+                    "status": existing_invoice.get("status"),
+                    "deleted_items": existing_invoice.get("items", [])
+                }
+            )
+            
+            logger.info(f"Deleted invoice with ID: {invoice_id}")
+            return True
+            
+        except ClientError as e:
+            logger.error(f"Error deleting invoice {invoice_id}: {e}")
+            raise Exception(f"Failed to delete invoice: {str(e)}")
+    
+    async def list_invoices(self, po_id_filter: Optional[str] = None, status_filter: Optional[str] = None) -> List[Dict[str, Any]]:
+        """List all invoices with optional filters"""
+        try:
+            filter_expression = None
+            
+            if po_id_filter and status_filter:
+                filter_expression = boto3.dynamodb.conditions.Attr('po_id').eq(po_id_filter) & boto3.dynamodb.conditions.Attr('status').eq(status_filter)
+            elif po_id_filter:
+                filter_expression = boto3.dynamodb.conditions.Attr('po_id').eq(po_id_filter)
+            elif status_filter:
+                filter_expression = boto3.dynamodb.conditions.Attr('status').eq(status_filter)
+            
+            if filter_expression:
+                response = self.invoices_table.scan(FilterExpression=filter_expression)
+            else:
+                response = self.invoices_table.scan()
+            
+            items = [self._convert_item_from_db(item) for item in response.get('Items', [])]
+            
+            logger.info(f"Retrieved {len(items)} invoices")
+            return items
+            
+        except ClientError as e:
+            logger.error(f"Error listing invoices: {e}")
+            raise Exception(f"Failed to list invoices: {str(e)}")
+    
+    async def reconcile_invoice_with_po(self, invoice_id: str, invoice_data: Dict[str, Any], po_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Reconcile an invoice with its associated purchase order"""
+        try:
+            reconciliation_details = {
+                "total_amount_match": False,
+                "items_match": False,
+                "po_status_valid": False,
+                "discrepancies": []
+            }
+            
+            # Check if PO is in a valid status for reconciliation
+            po_status = po_data.get("status", "").lower()
+            if po_status in ["approved", "sent"]:
+                reconciliation_details["po_status_valid"] = True
+            else:
+                reconciliation_details["discrepancies"].append(f"PO status is '{po_status}', expected 'approved' or 'sent'")
+            
+            # Check total amount match (allowing 1% tolerance)
+            po_total = float(po_data.get("total_amount", 0))
+            invoice_total = float(invoice_data.get("total_amount", 0))
+            amount_tolerance = po_total * 0.01  # 1% tolerance
+            
+            if abs(po_total - invoice_total) <= amount_tolerance:
+                reconciliation_details["total_amount_match"] = True
+            else:
+                reconciliation_details["discrepancies"].append(
+                    f"Total amount mismatch: PO ${po_total:.2f}, Invoice ${invoice_total:.2f}"
+                )
+            
+            # Basic items validation (count match)
+            po_items = po_data.get("items", [])
+            invoice_items = invoice_data.get("items", [])
+            
+            if len(po_items) == len(invoice_items):
+                reconciliation_details["items_match"] = True
+            else:
+                reconciliation_details["discrepancies"].append(
+                    f"Item count mismatch: PO has {len(po_items)} items, Invoice has {len(invoice_items)} items"
+                )
+            
+            # Determine reconciliation status
+            all_checks_passed = (
+                reconciliation_details["total_amount_match"] and
+                reconciliation_details["items_match"] and
+                reconciliation_details["po_status_valid"]
+            )
+            
+            if all_checks_passed:
+                status = "matched"
+                message = "Invoice successfully matched with purchase order"
+            else:
+                status = "rejected"
+                message = f"Invoice rejected due to {len(reconciliation_details['discrepancies'])} discrepancies"
+            
+            # Create audit log entry for reconciliation
+            await self.create_audit_log(
+                action="RECONCILE",
+                entity_type="Invoice",
+                entity_id=invoice_id,
+                details={
+                    "po_id": po_data.get("id"),
+                    "reconciliation_status": status,
+                    "checks_performed": reconciliation_details,
+                    "discrepancies": reconciliation_details["discrepancies"]
+                }
+            )
+            
+            return {
+                "status": status,
+                "message": message,
+                "details": reconciliation_details
+            }
+            
+        except Exception as e:
+            logger.error(f"Error reconciling invoice {invoice_id}: {e}")
+            raise Exception(f"Failed to reconcile invoice: {str(e)}")
 
 # Global service instance
 db_service = DynamoDBService() 
