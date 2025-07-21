@@ -5,7 +5,7 @@ import uvicorn
 from datetime import datetime
 
 # Import route modules
-from .routes import vendors, purchase_orders, invoices, payments, exports
+from .routes import vendors, purchase_orders, invoices, payments, exports, workday
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -31,6 +31,7 @@ app.include_router(purchase_orders.router, prefix="/api/v1/purchase-orders", tag
 app.include_router(invoices.router, prefix="/api/v1/invoices", tags=["invoices"])
 app.include_router(payments.router, prefix="/api/v1/payments", tags=["payments"])
 app.include_router(exports.router, prefix="/api/v1/exports", tags=["exports"])
+app.include_router(workday.router, prefix="/api/v1/workday", tags=["workday"])
 
 # Health check endpoint
 @app.get("/health")
