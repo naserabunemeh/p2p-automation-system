@@ -34,19 +34,16 @@ class S3Service:
             Dictionary with upload details
         """
         try:
-            # Generate file key
-            timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
-            file_key = f"payments/{payment_id}/payment_{payment_id}_{timestamp}.{file_format}"
+            # Generate file key - exact format as specified: payments/{payment_id}/payment.xml|.json
+            file_key = f"payments/{payment_id}/payment.{file_format}"
             
-            # Prepare metadata tags
+            # Prepare metadata tags - as specified: invoice_id, vendor_id, amount, status
             metadata = {
                 'payment_id': str(payment_data.get('id', payment_id)),
                 'invoice_id': str(payment_data.get('invoice_id', '')),
                 'vendor_id': str(payment_data.get('vendor_id', '')),
                 'amount': str(payment_data.get('amount', '0.00')),
-                'currency': str(payment_data.get('currency', 'USD')),
                 'status': str(payment_data.get('status', '')),
-                'approved_at': str(payment_data.get('approved_at', '')),
                 'file_format': file_format,
                 'upload_timestamp': datetime.utcnow().isoformat(),
                 'content_type': f'application/{file_format}'

@@ -3,6 +3,7 @@ from decimal import Decimal
 from datetime import datetime
 import xml.etree.ElementTree as ET
 from xml.dom import minidom
+import json
 
 class XMLGenerator:
     """Service for generating XML files for payments and other P2P entities"""
@@ -10,51 +11,54 @@ class XMLGenerator:
     @staticmethod
     def generate_payment_xml(payment_data: Dict[str, Any]) -> str:
         """
-        Generate XML for payment data
+        Generate Workday-compatible XML for payment data
         
         Args:
             payment_data: Dictionary containing payment information
             
         Returns:
-            Formatted XML string
+            Formatted XML string matching Workday schema
         """
-        # Create root element
-        root = ET.Element("payment")
-        root.set("xmlns", "http://www.workday.com/payments")
-        root.set("version", "1.0")
+        # Create root element - exact Workday format
+        root = ET.Element("Payment")
         
-        # Add payment header
-        header = ET.SubElement(root, "payment_header")
-        ET.SubElement(header, "payment_id").text = str(payment_data.get("id", ""))
-        ET.SubElement(header, "reference_number").text = str(payment_data.get("reference_number", ""))
-        ET.SubElement(header, "payment_date").text = XMLGenerator._format_datetime(payment_data.get("payment_date"))
-        ET.SubElement(header, "created_date").text = XMLGenerator._format_datetime(payment_data.get("created_at"))
-        ET.SubElement(header, "status").text = str(payment_data.get("status", ""))
-        
-        # Add vendor information
-        vendor = ET.SubElement(root, "vendor")
-        ET.SubElement(vendor, "vendor_id").text = str(payment_data.get("vendor_id", ""))
-        
-        # Add invoice information
-        invoice = ET.SubElement(root, "invoice")
-        ET.SubElement(invoice, "invoice_id").text = str(payment_data.get("invoice_id", ""))
-        
-        # Add payment details
-        payment_details = ET.SubElement(root, "payment_details")
-        ET.SubElement(payment_details, "amount").text = str(payment_data.get("amount", "0.00"))
-        ET.SubElement(payment_details, "currency").text = str(payment_data.get("currency", "USD"))
-        
-        # Add processing information
-        processing = ET.SubElement(root, "processing_info")
-        ET.SubElement(processing, "approved_at").text = XMLGenerator._format_datetime(payment_data.get("approved_at"))
-        ET.SubElement(processing, "updated_at").text = XMLGenerator._format_datetime(payment_data.get("updated_at"))
-        
-        # Add notes if present
-        if payment_data.get("notes"):
-            ET.SubElement(root, "notes").text = str(payment_data.get("notes"))
+        # Add required elements in exact order per Workday schema
+        ET.SubElement(root, "ID").text = str(payment_data.get("id", ""))
+        ET.SubElement(root, "InvoiceID").text = str(payment_data.get("invoice_id", ""))
+        ET.SubElement(root, "VendorID").text = str(payment_data.get("vendor_id", ""))
+        ET.SubElement(root, "Amount").text = f"{payment_data.get('amount', 0.00):.2f}"
+        ET.SubElement(root, "Currency").text = str(payment_data.get("currency", "USD"))
+        ET.SubElement(root, "Status").text = str(payment_data.get("status", "approved"))
+        ET.SubElement(root, "Timestamp").text = XMLGenerator._format_datetime(payment_data.get("approved_at"))
         
         # Format XML with proper indentation
         return XMLGenerator._prettify_xml(root)
+    
+    @staticmethod
+    def generate_payment_json(payment_data: Dict[str, Any]) -> str:
+        """
+        Generate JSON mirror of Workday-compatible XML payment data
+        
+        Args:
+            payment_data: Dictionary containing payment information
+            
+        Returns:
+            JSON string matching XML structure
+        """
+        # Create JSON structure that mirrors the XML
+        json_structure = {
+            "Payment": {
+                "ID": str(payment_data.get("id", "")),
+                "InvoiceID": str(payment_data.get("invoice_id", "")),
+                "VendorID": str(payment_data.get("vendor_id", "")),
+                "Amount": f"{payment_data.get('amount', 0.00):.2f}",
+                "Currency": str(payment_data.get("currency", "USD")),
+                "Status": str(payment_data.get("status", "approved")),
+                "Timestamp": XMLGenerator._format_datetime(payment_data.get("approved_at"))
+            }
+        }
+        
+        return json.dumps(json_structure, indent=2, ensure_ascii=False)
     
     @staticmethod
     def generate_vendor_xml(vendor_data: Dict[str, Any]) -> str:

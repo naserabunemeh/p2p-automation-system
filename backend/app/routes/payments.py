@@ -82,11 +82,11 @@ async def approve_payment(invoice_id: str, request: ApprovePaymentRequest):
             'due_date': invoice.get('due_date') if invoice else None
         }
         
-        # Step 3: Generate XML content using XMLGenerator
+        # Step 3: Generate XML content using XMLGenerator (Workday-compatible)
         xml_content = XMLGenerator.generate_payment_xml(enhanced_payment)
         
-        # Step 4: Generate JSON content
-        json_content = json.dumps(enhanced_payment, indent=2, default=str)
+        # Step 4: Generate JSON content (mirror of XML structure)
+        json_content = XMLGenerator.generate_payment_json(enhanced_payment)
         
         # Step 5: Upload XML file to S3
         xml_upload_result = await s3_service.upload_payment_file(
