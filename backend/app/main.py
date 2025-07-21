@@ -5,7 +5,7 @@ import uvicorn
 from datetime import datetime
 
 # Import route modules
-from routes import vendors, purchase_orders, invoices, payments
+from .routes import vendors, purchase_orders, invoices, payments
 
 # Initialize FastAPI app
 app = FastAPI(

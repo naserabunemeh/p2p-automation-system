@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, EmailStr
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 from decimal import Decimal
@@ -41,7 +41,7 @@ class BaseEntity(BaseModel):
 # Vendor Models
 class VendorBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
-    email: str = Field(..., regex=r'^[^@]+@[^@]+\.[^@]+$')
+    email: EmailStr
     phone: Optional[str] = None
     address: Optional[str] = None
     tax_id: Optional[str] = None
@@ -53,7 +53,7 @@ class VendorCreate(VendorBase):
 
 class VendorUpdate(BaseModel):
     name: Optional[str] = None
-    email: Optional[str] = None
+    email: Optional[EmailStr] = None
     phone: Optional[str] = None
     address: Optional[str] = None
     tax_id: Optional[str] = None
