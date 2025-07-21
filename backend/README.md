@@ -104,8 +104,8 @@ Create a `.env` file in the backend directory:
 
 ```env
 AWS_REGION=us-east-1
-AWS_ACCESS_KEY_ID=your_access_key
-AWS_SECRET_ACCESS_KEY=your_secret_key
+AWS_ACCESS_KEY_ID=YOUR_AWS_ACCESS_KEY_HERE
+AWS_SECRET_ACCESS_KEY=YOUR_AWS_SECRET_KEY_HERE
 DYNAMODB_TABLE_PREFIX=p2p_
 S3_BUCKET_NAME=p2p-automation-bucket
 ENVIRONMENT=development
